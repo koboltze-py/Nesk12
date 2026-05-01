@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QComboBox, QDateEdit, QTimeEdit, QTextEdit,
     QMessageBox, QFileDialog, QSpinBox, QFrame, QLineEdit,
     QTreeView, QSplitter, QFileSystemModel,
-    QScrollArea, QCheckBox, QRadioButton, QButtonGroup
+    QScrollArea, QCheckBox, QRadioButton, QButtonGroup, QTabWidget
 )
 from PySide6.QtCore import Qt, QDate, QTime, Signal, QFileSystemWatcher
 from PySide6.QtGui import QFont, QColor
@@ -158,6 +158,73 @@ def _ist_letzte_3_tage(datum_str: str) -> bool:
         return False
 
 
+class _DienstlichesDetailDialog(QDialog):
+    """Zeigt einen Einsatz- oder Patienten-Eintrag schreibgeschützt an."""
+
+    def __init__(self, daten: dict, typ: str, parent=None):
+        super().__init__(parent)
+        is_einsatz = (typ == "einsaetze")
+        self.setWindowTitle(
+            "🚨  Einsatz – Detailansicht" if is_einsatz else "🏥  Patient Station – Detailansicht"
+        )
+        self.setMinimumWidth(480)
+        self.setMinimumHeight(320)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        # Header
+        hdr = QLabel(
+            f"{'Einsatz' if is_einsatz else 'Patient Station'}  –  "
+            f"{daten.get('datum', '')}  {daten.get('uhrzeit', '')}"
+        )
+        hdr.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        hdr.setStyleSheet(
+            "color: #c0392b; padding: 6px;" if is_einsatz
+            else "color: #2471a3; padding: 6px;"
+        )
+        layout.addWidget(hdr)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #ddd;")
+        layout.addWidget(sep)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        def _lbl(text: str) -> QLabel:
+            l = QLabel(text or "—")
+            l.setWordWrap(True)
+            l.setFont(QFont("Arial", 10))
+            l.setStyleSheet("color: #333; padding: 2px;")
+            return l
+
+        if is_einsatz:
+            form.addRow("Einsatzstichwort:", _lbl(daten.get("einsatzstichwort", "")))
+            form.addRow("Einsatzort:",       _lbl(daten.get("einsatzort", "")))
+            form.addRow("SL-Name:",          _lbl(daten.get("sl_name", "")))
+            form.addRow("Patient:",          _lbl(daten.get("patient_name", "")))
+            form.addRow("Maßnahmen:",        _lbl(daten.get("massnahmen", "")))
+            form.addRow("Bemerkung:",        _lbl(daten.get("bemerkung", "")))
+        else:
+            form.addRow("Patientenname:",   _lbl(daten.get("patient_name", "")))
+            form.addRow("Patiententyp:",    _lbl(daten.get("patient_typ", "")))
+            form.addRow("Beschwerde:",      _lbl(daten.get("beschwerde_art", "") or daten.get("symptome", "")))
+            form.addRow("Vitalzeichen:",    _lbl(daten.get("vitalzeichen", "")))
+            form.addRow("Maßnahmen:",       _lbl(daten.get("massnahmen", "")))
+            form.addRow("Medikamente:",     _lbl(daten.get("medikamente", "")))
+            form.addRow("Bemerkung:",       _lbl(daten.get("bemerkung", "")))
+
+        layout.addLayout(form)
+        layout.addStretch()
+
+        btn = QPushButton("Schließen")
+        btn.setMinimumHeight(36)
+        btn.setStyleSheet(f"background: {FIORI_BLUE}; color: white; border-radius: 4px; padding: 0 16px;")
+        btn.clicked.connect(self.accept)
+        layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignRight)
+
+
 class ExportDialog(QDialog):
     """Dialog für Word-Export: Zeitraum, PAX-Zahl, Ausgabepfad, Sonderdienst-Filter."""
 
@@ -170,8 +237,8 @@ class ExportDialog(QDialog):
     def __init__(self, parsed_data: dict | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Word-Export  -  Stärkemeldung")
-        self.setMinimumWidth(520)
-        self.setMinimumHeight(560)
+        self.setMinimumWidth(780)
+        self.setMinimumHeight(820)
         self._parsed_data = parsed_data or {}
         self.result: dict | None = None
         self._checkboxen: list[tuple] = []        # (QCheckBox, vollname_lower)
@@ -232,98 +299,188 @@ class ExportDialog(QDialog):
         sl_lbl.setStyleSheet("color: #333; padding: 2px 0;")
         layout.addWidget(sl_lbl)
 
-        hint_lbl = QLabel("  Auswahl → zählt zu SL-Einsätze  |  Grau = bereits gezählt")
+        hint_lbl = QLabel("  Haken = wird zu SL-Einsätze gezählt  |  Grau = bereits gezählt  |  👁 = Detail ansehen")
         hint_lbl.setStyleSheet("color: #888; font-size: 10px;")
         layout.addWidget(hint_lbl)
 
         sl_scroll = QScrollArea()
         sl_scroll.setWidgetResizable(True)
-        sl_scroll.setMaximumHeight(170)
+        sl_scroll.setMinimumHeight(220)
+        sl_scroll.setMaximumHeight(340)
         sl_scroll.setStyleSheet(
-            "QScrollArea { border: 1px solid #dce8f5; border-radius: 4px; }"
+            "QScrollArea { border: 1px solid #dce8f5; border-radius: 4px; background: #f8faff; }"
         )
         sl_inner        = QWidget()
+        sl_inner.setStyleSheet("background: #f8faff;")
         sl_inner_layout = QVBoxLayout(sl_inner)
-        sl_inner_layout.setSpacing(3)
+        sl_inner_layout.setSpacing(4)
         sl_inner_layout.setContentsMargins(8, 6, 8, 6)
 
         gezaehlt = self._lade_gezaehlt()
         hatte_eintraege = False
 
-        # Einsätze letzter 3 Tage
+        # Alle Einträge aus Einsätze + Patienten sammeln und nach Datum gruppieren
+        alle_roh: list[dict] = []
         try:
             from gui.dienstliches import lade_einsaetze as _le
-            alle_e = _le()
-            letzte_e = [e for e in alle_e if _ist_letzte_3_tage(e.get("datum", ""))]
-            letzte_e.sort(
-                key=lambda e: (e.get("datum", "")[-4:] + e.get("datum", "")[3:5] +
-                               e.get("datum", "")[:2] + e.get("uhrzeit", "")),
-                reverse=True,
-            )
-            if letzte_e:
-                hatte_eintraege = True
-                e_hdr = QLabel("🚨  Einsätze:")
-                e_hdr.setFont(QFont("Arial", 9, QFont.Weight.Bold))
-                e_hdr.setStyleSheet("color: #c0392b;")
-                sl_inner_layout.addWidget(e_hdr)
-                for e in letzte_e:
-                    eid = e.get("id")
-                    bereits = eid in gezaehlt["einsaetze"]
-                    stichwort = (e.get("einsatzstichwort") or e.get("einsatzort") or "—")[:35]
-                    text = f"  {e.get('datum','')} {e.get('uhrzeit','')}  {stichwort}"
-                    if bereits:
-                        text += "  ✓ bereits gezählt"
-                    cb = QCheckBox(text)
-                    cb.setFont(QFont("Arial", 9))
-                    if bereits:
-                        cb.setChecked(True)
-                        cb.setEnabled(False)
-                        cb.setStyleSheet("color: #aaa;")
-                    else:
-                        cb.toggled.connect(self._sl_toggle)
-                    sl_inner_layout.addWidget(cb)
-                    self._sl_checkboxen.append((cb, "einsaetze", eid, bereits))
+            for e in _le():
+                if _ist_letzte_3_tage(e.get("datum", "")):
+                    alle_roh.append({
+                        "typ":          "einsaetze",
+                        "id":           e.get("id"),
+                        "datum":        e.get("datum", ""),
+                        "uhrzeit":      e.get("uhrzeit", ""),
+                        "beschreibung": (e.get("einsatzstichwort") or e.get("einsatzort") or "—")[:40],
+                        "detail":       (e.get("einsatzort") or "")[:30],
+                        "bereits":      e.get("id") in gezaehlt["einsaetze"],
+                        "_roh":         e,
+                    })
+        except Exception:
+            pass
+        try:
+            from gui.dienstliches import lade_patienten as _lp
+            for p in _lp():
+                if _ist_letzte_3_tage(p.get("datum", "")):
+                    alle_roh.append({
+                        "typ":          "patienten",
+                        "id":           p.get("id"),
+                        "datum":        p.get("datum", ""),
+                        "uhrzeit":      p.get("uhrzeit", ""),
+                        "beschreibung": (p.get("beschwerde_art") or p.get("symptome") or "—")[:40],
+                        "detail":       (p.get("patient_name") or "")[:25],
+                        "bereits":      p.get("id") in gezaehlt["patienten"],
+                        "_roh":         p,
+                    })
         except Exception:
             pass
 
-        # Patienten letzter 3 Tage
-        try:
-            from gui.dienstliches import lade_patienten as _lp
-            alle_p = _lp()
-            letzte_p = [p for p in alle_p if _ist_letzte_3_tage(p.get("datum", ""))]
-            letzte_p.sort(
-                key=lambda p: (p.get("datum", "")[-4:] + p.get("datum", "")[3:5] +
-                               p.get("datum", "")[:2] + p.get("uhrzeit", "")),
-                reverse=True,
+        # Nach Datum absteigend sortieren
+        def _sort_key(e: dict):
+            d = e["datum"]
+            try:
+                return (
+                    d[-4:] + d[3:5] + d[:2],  # YYYYMMDD
+                    e["uhrzeit"],
+                )
+            except Exception:
+                return ("", "")
+        alle_roh.sort(key=_sort_key, reverse=True)
+
+        # Karten gruppiert nach Datum ausgeben
+        aktuelles_datum: str | None = None
+        for eintrag in alle_roh:
+            hatte_eintraege = True
+            datum_str  = eintrag["datum"]
+            is_einsatz = eintrag["typ"] == "einsaetze"
+            bereits    = eintrag["bereits"]
+
+            # Datums-Gruppenheader
+            if datum_str != aktuelles_datum:
+                aktuelles_datum = datum_str
+                tages_gruppe    = [e for e in alle_roh if e["datum"] == datum_str]
+                cnt_ber  = sum(1 for e in tages_gruppe if e["bereits"])
+                cnt_ges  = len(tages_gruppe)
+
+                d_hdr = QFrame()
+                d_hdr.setStyleSheet(
+                    "QFrame { background: #dde9f8; border-radius: 3px; "
+                    "padding: 2px 0; margin-top: 4px; }"
+                )
+                d_hdr_layout = QHBoxLayout(d_hdr)
+                d_hdr_layout.setContentsMargins(10, 5, 10, 5)
+                d_lbl = QLabel(f"📅  {datum_str}")
+                d_lbl.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+                d_lbl.setStyleSheet("color: #1565c0; background: transparent;")
+                d_hdr_layout.addWidget(d_lbl)
+                d_hdr_layout.addStretch()
+                cnt_lbl_hdr = QLabel(f"{cnt_ber} / {cnt_ges} gezählt")
+                cnt_lbl_hdr.setStyleSheet("color: #5c7caf; font-size: 9px; background: transparent;")
+                d_hdr_layout.addWidget(cnt_lbl_hdr)
+                sl_inner_layout.addWidget(d_hdr)
+
+            # Eintrags-Karte
+            card = QFrame()
+            if bereits:
+                card.setStyleSheet(
+                    "QFrame { background: #eafaf1; border: 1px solid #a9dfbf; "
+                    "border-radius: 4px; border-left: 5px solid #1e8449; }"
+                )
+            else:
+                _bc = "#c0392b" if is_einsatz else "#2471a3"
+                card.setStyleSheet(
+                    f"QFrame {{ background: #ffffff; border: 1px solid #dce8f5; "
+                    f"border-radius: 4px; border-left: 5px solid {_bc}; }}"
+                )
+            card_layout = QHBoxLayout(card)
+            card_layout.setContentsMargins(8, 5, 8, 5)
+            card_layout.setSpacing(8)
+
+            # Checkbox
+            cb = QCheckBox()
+            cb.setChecked(bereits)
+            if bereits:
+                cb.setEnabled(False)
+                cb.setStyleSheet("background: transparent; border: none;")
+            else:
+                cb.setStyleSheet("background: transparent; border: none;")
+                cb.toggled.connect(self._sl_toggle)
+
+            # Icon + Typ
+            icon_lbl = QLabel("🚨" if is_einsatz else "🏥")
+            icon_lbl.setFixedWidth(22)
+            icon_lbl.setStyleSheet("background: transparent; border: none;")
+
+            # Uhrzeit
+            zeit_lbl = QLabel(eintrag["uhrzeit"] or "—:—")
+            zeit_lbl.setFixedWidth(42)
+            zeit_lbl.setFont(QFont("Consolas", 9, QFont.Weight.Bold))
+            zeit_lbl.setStyleSheet("color: #333; background: transparent; border: none;")
+
+            # Beschreibung
+            beschr_lbl = QLabel(eintrag["beschreibung"])
+            beschr_lbl.setFont(QFont("Arial", 9))
+            beschr_lbl.setStyleSheet(
+                "color: #aaa; background: transparent; border: none;"
+                if bereits else
+                "color: #222; background: transparent; border: none;"
             )
-            if letzte_p:
-                hatte_eintraege = True
-                p_hdr = QLabel("🏥  Patienten Station:")
-                p_hdr.setFont(QFont("Arial", 9, QFont.Weight.Bold))
-                p_hdr.setStyleSheet("color: #2980b9;")
-                sl_inner_layout.addWidget(p_hdr)
-                for p in letzte_p:
-                    pid = p.get("id")
-                    bereits = pid in gezaehlt["patienten"]
-                    name = (p.get("patient_name") or "—")[:20]
-                    beschwerde = (p.get("beschwerde_art") or p.get("symptome") or "")[:25]
-                    text = f"  {p.get('datum','')} {p.get('uhrzeit','')}  {name}"
-                    if beschwerde:
-                        text += f"  {beschwerde}"
-                    if bereits:
-                        text += "  ✓ bereits gezählt"
-                    cb = QCheckBox(text)
-                    cb.setFont(QFont("Arial", 9))
-                    if bereits:
-                        cb.setChecked(True)
-                        cb.setEnabled(False)
-                        cb.setStyleSheet("color: #aaa;")
-                    else:
-                        cb.toggled.connect(self._sl_toggle)
-                    sl_inner_layout.addWidget(cb)
-                    self._sl_checkboxen.append((cb, "patienten", pid, bereits))
-        except Exception:
-            pass
+
+            # Detail-Label
+            det_lbl = QLabel(eintrag["detail"] or "")
+            det_lbl.setFont(QFont("Arial", 8))
+            det_lbl.setStyleSheet("color: #777; background: transparent; border: none;")
+
+            # 👁 Detail-Button
+            detail_btn = QPushButton("👁")
+            detail_btn.setFixedSize(26, 26)
+            detail_btn.setStyleSheet(
+                "QPushButton { background: transparent; border: 1px solid #bbb; "
+                "border-radius: 4px; font-size: 13px; }"
+                "QPushButton:hover { background: #e8f0fb; border-color: #5c8fe8; }"
+            )
+            detail_btn.setToolTip("Eintrag öffnen (Nur-Lese-Ansicht)")
+            _roh = eintrag["_roh"]
+            _typ = eintrag["typ"]
+            detail_btn.clicked.connect(
+                lambda _checked=False, roh=_roh, typ=_typ: self._oeffne_detail(roh, typ)
+            )
+
+            card_layout.addWidget(cb)
+            card_layout.addWidget(icon_lbl)
+            card_layout.addWidget(zeit_lbl)
+            card_layout.addWidget(beschr_lbl, stretch=2)
+            card_layout.addWidget(det_lbl, stretch=1)
+            if bereits:
+                badge = QLabel("✓ gezählt")
+                badge.setStyleSheet(
+                    "background: #1e8449; color: white; border-radius: 3px; "
+                    "padding: 2px 6px; font-size: 8px; font-weight: bold; border: none;"
+                )
+                card_layout.addWidget(badge)
+            card_layout.addWidget(detail_btn)
+
+            sl_inner_layout.addWidget(card)
+            self._sl_checkboxen.append((cb, eintrag["typ"], eintrag["id"], bereits))
 
         if not hatte_eintraege:
             leer_lbl = QLabel("  Keine Einträge in den letzten 3 Tagen gefunden.")
@@ -437,6 +594,11 @@ class ExportDialog(QDialog):
             self._einsaetze.setValue(self._einsaetze.value() + 1)
         else:
             self._einsaetze.setValue(max(0, self._einsaetze.value() - 1))
+
+    def _oeffne_detail(self, daten: dict, typ: str):
+        """Detail-Ansicht eines Einsatz- oder Patienten-Eintrags (nur Lesen)."""
+        dlg = _DienstlichesDetailDialog(daten=daten, typ=typ, parent=self)
+        dlg.exec()
 
     def _lade_gezaehlt(self) -> dict:
         """Bereits gezählte IDs aus JSON laden."""
@@ -2052,10 +2214,8 @@ class PaxEinsatzVerwaltungDialog(QDialog):
                 continue
 
             try:
-                if pax > 0:
-                    speichere_tages_pax(datum, pax)
-                if ein > 0:
-                    speichere_tages_einsaetze(datum, ein)
+                speichere_tages_pax(datum, pax)
+                speichere_tages_einsaetze(datum, ein)
                 gespeichert += 1
             except Exception as exc:
                 fehler.append(f"Zeile {row+1}: DB-Fehler: {exc}")
@@ -2230,11 +2390,39 @@ class DienstplanWidget(QWidget):
 
         outer_splitter.addWidget(self._pane_splitter)
         outer_splitter.setSizes([240, 900])
-        outer.addWidget(outer_splitter, 1)
+
+        # ── Tab-Widget: Dienstplan | Historie ──────────────────────────
+        self._tab_widget = QTabWidget()
+        self._tab_widget.setStyleSheet(
+            "QTabBar::tab { min-width: 130px; padding: 6px 18px; font-size: 12px; }"
+            "QTabBar::tab:selected { font-weight: bold; color: #0a6ed1; "
+            "border-bottom: 3px solid #0a6ed1; }"
+        )
+
+        # Tab 1: Dienstplan (Splitter)
+        tab_dienstplan = QWidget()
+        tab_dp_layout = QVBoxLayout(tab_dienstplan)
+        tab_dp_layout.setContentsMargins(0, 0, 0, 0)
+        tab_dp_layout.addWidget(outer_splitter, 1)
+        self._tab_widget.addTab(tab_dienstplan, "📋  Dienstplan")
+
+        # Tab 2: Export-Historie
+        self._historie_tab = _HistorieTab()
+        self._tab_widget.addTab(self._historie_tab, "📁  Export-Historie")
+
+        # Tab-Wechsel → Historie aktualisieren
+        self._tab_widget.currentChanged.connect(self._on_tab_changed)
+
+        outer.addWidget(self._tab_widget, 1)
 
         # Export-Pane initial markieren
         self._set_export_pane(0)
         self._setup_tree()
+
+    def _on_tab_changed(self, index: int):
+        """Bei Wechsel auf den Historie-Tab: Daten neu laden."""
+        if index == 1:
+            self._historie_tab._lade_daten()
 
     # ------------------------------------------------------------------
     # Dateibaum
@@ -2562,6 +2750,24 @@ class DienstplanWidget(QWidget):
             pane._status_lbl.setText(f"Word-Export: {os.path.basename(pfad)}")
             pane._status_lbl.setStyleSheet("color: #107e3e; padding: 2px 0px;")
 
+            # Export in Historie speichern
+            try:
+                from database.export_historie_db import speichere_export as _sh
+                _sh(
+                    von_datum      = params['von_datum'].strftime('%Y-%m-%d'),
+                    bis_datum      = params['bis_datum'].strftime('%Y-%m-%d'),
+                    pax_zahl       = params.get('pax_zahl', 0),
+                    bulmor_aktiv   = params.get('bulmor_aktiv', 5),
+                    einsaetze_zahl = params.get('einsaetze_zahl', 0),
+                    sl_tag_name    = params.get('sl_tag_name', ''),
+                    sl_nacht_name  = params.get('sl_nacht_name', ''),
+                    format_        = params.get('format', 'dashboard'),
+                    word_pfad      = pfad,
+                    excel_pfad     = pane.excel_path or '',
+                )
+            except Exception:
+                pass  # nicht-kritisch
+
         except Exception as e:
             QMessageBox.critical(self, "Fehler beim Export", f"Fehler:\n{e}")
             return
@@ -2584,3 +2790,235 @@ class DienstplanWidget(QWidget):
 
     def _delete_schicht(self):
         pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Historie-Tab: Exportierte Stärkemeldungen verwalten
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _HistorieTab(QWidget):
+    """Zeigt alle exportierten Stärkemeldungen und ermöglicht Re-Export, Öffnen etc."""
+
+    _COLS = ["Datum (Von)", "Bis", "PAX", "Einsätze", "SL Tag", "SL Nacht",
+             "Format", "Word-Datei", "Exportiert am"]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._eintraege: list[dict] = []
+        self._build_ui()
+        self._lade_daten()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
+
+        # Titelzeile
+        top = QHBoxLayout()
+        title = QLabel("Export-Historie – Gesendete Stärkemeldungen")
+        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {FIORI_TEXT};")
+        top.addWidget(title)
+        top.addStretch()
+
+        refresh_btn = QPushButton("🔄  Aktualisieren")
+        refresh_btn.setMinimumHeight(32)
+        refresh_btn.setStyleSheet(
+            f"background:{FIORI_BLUE}; color:white; border-radius:4px; padding:0 12px;"
+        )
+        refresh_btn.clicked.connect(self._lade_daten)
+        top.addWidget(refresh_btn)
+        layout.addLayout(top)
+
+        info_lbl = QLabel(
+            "Hier werden alle exportierten Stärkemeldungen aufgelistet. "
+            "Doppelklick oder Schaltflächen nutzen um ein Word-Dokument zu öffnen, "
+            "den Ordner anzuzeigen oder erneut zu exportieren."
+        )
+        info_lbl.setWordWrap(True)
+        info_lbl.setStyleSheet(
+            "background:#e8f0fb; border:1px solid #b0c8f0; border-radius:6px; "
+            "padding:8px 14px; color:#1a4a8a; font-size:12px;"
+        )
+        layout.addWidget(info_lbl)
+
+        # Tabelle
+        self._table = QTableWidget(0, len(self._COLS))
+        self._table.setHorizontalHeaderLabels(self._COLS)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setDefaultSectionSize(28)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._table.setStyleSheet(
+            "QTableWidget { border: 1px solid #dce8f5; border-radius: 6px; "
+            "font-size: 12px; gridline-color: #eef4fa; }"
+            "QTableWidget::item:selected { background: #dce8f5; color: #0a5ba4; }"
+            "QHeaderView::section { background: #eef4fa; font-weight: bold; "
+            "border: 1px solid #dce8f5; padding: 4px; }"
+        )
+        self._table.doubleClicked.connect(self._word_oeffnen)
+        layout.addWidget(self._table, 1)
+
+        # Button-Leiste
+        btn_row = QHBoxLayout()
+
+        self._btn_word = QPushButton("📄  Word öffnen")
+        self._btn_word.setMinimumHeight(36)
+        self._btn_word.setStyleSheet(
+            "background:#107e3e; color:white; border-radius:4px; padding:0 12px;"
+        )
+        self._btn_word.clicked.connect(self._word_oeffnen)
+        btn_row.addWidget(self._btn_word)
+
+        self._btn_ordner = QPushButton("📂  Ordner öffnen")
+        self._btn_ordner.setMinimumHeight(36)
+        self._btn_ordner.setStyleSheet(
+            "background:#5a6e3c; color:white; border-radius:4px; padding:0 12px;"
+        )
+        self._btn_ordner.clicked.connect(self._ordner_oeffnen)
+        btn_row.addWidget(self._btn_ordner)
+
+        self._btn_pfad = QPushButton("🔗  Pfad kopieren")
+        self._btn_pfad.setMinimumHeight(36)
+        self._btn_pfad.setStyleSheet(
+            "background:#5a3e8c; color:white; border-radius:4px; padding:0 12px;"
+        )
+        self._btn_pfad.clicked.connect(self._pfad_kopieren)
+        btn_row.addWidget(self._btn_pfad)
+
+        btn_row.addStretch()
+
+        self._btn_loeschen = QPushButton("🗑  Löschen")
+        self._btn_loeschen.setMinimumHeight(36)
+        self._btn_loeschen.setStyleSheet(
+            "background:#bb0000; color:white; border-radius:4px; padding:0 12px;"
+        )
+        self._btn_loeschen.clicked.connect(self._eintrag_loeschen)
+        btn_row.addWidget(self._btn_loeschen)
+
+        layout.addLayout(btn_row)
+
+    def _lade_daten(self):
+        """Daten aus der Export-Historie laden und Tabelle befüllen."""
+        try:
+            from database.export_historie_db import lade_alle_exporte
+            self._eintraege = lade_alle_exporte()
+        except Exception:
+            self._eintraege = []
+
+        self._table.setRowCount(0)
+        for eintrag in self._eintraege:
+            row = self._table.rowCount()
+            self._table.insertRow(row)
+
+            von  = eintrag.get("von_datum", "")
+            bis  = eintrag.get("bis_datum", "")
+            pfad = eintrag.get("word_pfad", "")
+            fmt  = eintrag.get("format", "")
+            ex   = eintrag.get("exportiert_am", "")
+
+            # Datum formatieren YYYY-MM-DD → DD.MM.YYYY
+            def _fmt_d(s):
+                try:
+                    return datetime.strptime(s[:10], "%Y-%m-%d").strftime("%d.%m.%Y")
+                except Exception:
+                    return s
+
+            werte = [
+                _fmt_d(von),
+                _fmt_d(bis),
+                str(eintrag.get("pax_zahl", 0)),
+                str(eintrag.get("einsaetze_zahl", 0)),
+                eintrag.get("sl_tag_name", ""),
+                eintrag.get("sl_nacht_name", ""),
+                "Dashboard" if fmt == "dashboard" else "Klassisch",
+                os.path.basename(pfad) if pfad else "—",
+                ex[:16] if ex else "",
+            ]
+            for col, val in enumerate(werte):
+                item = QTableWidgetItem(val)
+                # Word-Datei existiert?
+                if col == 7:
+                    if pfad and os.path.isfile(pfad):
+                        item.setForeground(QColor("#107e3e"))
+                    elif pfad:
+                        item.setForeground(QColor("#bb0000"))
+                self._table.setItem(row, col, item)
+
+        self._table.resizeColumnsToContents()
+
+    def _ausgewaehlter_eintrag(self) -> dict | None:
+        """Gibt den aktuell gewählten Eintrag zurück, oder None."""
+        row = self._table.currentRow()
+        if row < 0 or row >= len(self._eintraege):
+            return None
+        return self._eintraege[row]
+
+    def _word_oeffnen(self):
+        eintrag = self._ausgewaehlter_eintrag()
+        if not eintrag:
+            QMessageBox.information(self, "Hinweis", "Bitte einen Eintrag auswählen.")
+            return
+        pfad = eintrag.get("word_pfad", "")
+        if not pfad or not os.path.isfile(pfad):
+            QMessageBox.warning(
+                self, "Datei nicht gefunden",
+                f"Die Word-Datei wurde nicht gefunden:\n{pfad or '(kein Pfad gespeichert)'}"
+            )
+            return
+        try:
+            os.startfile(pfad)
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Konnte Datei nicht öffnen:\n{e}")
+
+    def _ordner_oeffnen(self):
+        eintrag = self._ausgewaehlter_eintrag()
+        if not eintrag:
+            QMessageBox.information(self, "Hinweis", "Bitte einen Eintrag auswählen.")
+            return
+        pfad = eintrag.get("word_pfad", "")
+        ordner = os.path.dirname(pfad) if pfad else ""
+        if not ordner or not os.path.isdir(ordner):
+            QMessageBox.warning(self, "Ordner nicht gefunden",
+                                f"Ordner nicht gefunden:\n{ordner or '(kein Pfad gespeichert)'}")
+            return
+        try:
+            os.startfile(ordner)
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Konnte Ordner nicht öffnen:\n{e}")
+
+    def _pfad_kopieren(self):
+        eintrag = self._ausgewaehlter_eintrag()
+        if not eintrag:
+            QMessageBox.information(self, "Hinweis", "Bitte einen Eintrag auswählen.")
+            return
+        pfad = eintrag.get("word_pfad", "")
+        if pfad:
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(pfad)
+            QMessageBox.information(self, "Kopiert", f"Pfad in Zwischenablage:\n{pfad}")
+        else:
+            QMessageBox.warning(self, "Kein Pfad", "Kein Word-Pfad gespeichert.")
+
+    def _eintrag_loeschen(self):
+        eintrag = self._ausgewaehlter_eintrag()
+        if not eintrag:
+            QMessageBox.information(self, "Hinweis", "Bitte einen Eintrag auswählen.")
+            return
+        ret = QMessageBox.question(
+            self, "Eintrag löschen",
+            f"Eintrag vom {eintrag.get('exportiert_am', '')[:16]} wirklich aus der Historie löschen?\n"
+            "(Die Word-Datei wird NICHT gelöscht.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            from database.export_historie_db import loesche_export
+            loesche_export(eintrag["id"])
+            self._lade_daten()
+        except Exception as e:
+            QMessageBox.critical(self, "Fehler", f"Fehler beim Löschen:\n{e}")
