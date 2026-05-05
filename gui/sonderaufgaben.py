@@ -1039,10 +1039,15 @@ class SonderaufgabenWidget(QWidget):
     # ── Vorfeldmitarbeiterliste speichern ────────────────────────────────────
 
     def _save_vorfeld(self, silent: bool = False) -> Path | None:
-        """Vorfeldmitarbeiterliste als Excel in VORFELD_DIR speichern."""
+        """Vorfeldmitarbeiterliste als Excel in VORFELD_DIR speichern.
+
+        Stil: Querformat A4, schwarz-weiß (keine Farben), große Schrift,
+        genug Innenabstand, Fußzeile wie Vorlage (Bearbeitung / Version).
+        """
         try:
             import openpyxl
             from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.worksheet.page import PageMargins
         except ImportError:
             if not silent:
                 QMessageBox.critical(self, "Fehler", "openpyxl nicht installiert!")
@@ -1058,80 +1063,138 @@ class SonderaufgabenWidget(QWidget):
             ws = wb.active
             ws.title = "Vorfeldmitarbeiter"
 
-            # ── Styles ──────────────────────────────────────────────────────
-            title_font  = Font(name="Arial", bold=True, size=13, color="222222")
-            header_font = Font(name="Arial", bold=True, size=11, color="FFFFFF")
-            header_fill = PatternFill(start_color="1565A8", end_color="1565A8",
-                                      fill_type="solid")
-            data_font   = Font(name="Arial", size=11)
-            group_fonts = [
-                Font(name="Arial", bold=True, size=11, color="FFFFFF"),
-                Font(name="Arial", bold=True, size=11, color="FFFFFF"),
-                Font(name="Arial", bold=True, size=11, color="FFFFFF"),
-            ]
-            group_fills = [
-                PatternFill(start_color="1B5E20", end_color="1B5E20", fill_type="solid"),
-                PatternFill(start_color="E65100", end_color="E65100", fill_type="solid"),
-                PatternFill(start_color="4527A0", end_color="4527A0", fill_type="solid"),
-            ]
-            thin_side   = Side(border_style="thin", color="C8D2DC")
-            thin_border = Border(left=thin_side, right=thin_side,
-                                 top=thin_side, bottom=thin_side)
-            center      = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            left        = Alignment(horizontal="left",   vertical="center")
-
-            ws.column_dimensions["A"].width = 24
-            ws.column_dimensions["B"].width = 26
-            ws.column_dimensions["C"].width = 26
-            ws.column_dimensions["D"].width = 26
-
-            # ── Titel-Zeile ─────────────────────────────────────────────────
-            ws.merge_cells("A1:D1")
-            c = ws["A1"]
-            c.value = (
-                f"DRK KV Köln e.V.  –  Vorfeldmitarbeiter  –  Sanitätsstation CGN"
-                f"        Datum: {datum_heute.strftime('%d.%m.%Y')}"
+            # ── Seite: Querformat A4, gleiche Ränder wie Vorlage ────────────
+            ws.page_setup.orientation = "landscape"
+            ws.page_setup.paperSize   = 9        # A4
+            ws.page_setup.fitToPage   = True
+            ws.page_setup.fitToWidth  = 1
+            ws.page_setup.fitToHeight = 0
+            ws.page_margins = PageMargins(
+                left=0.7, right=0.7, top=0.75, bottom=0.75,
+                header=0.3, footer=0.3,
             )
-            c.font = title_font
-            c.alignment = left
-            ws.row_dimensions[1].height = 26
+            ws.print_area = "A1:H9"
 
-            # ── Header-Zeile ─────────────────────────────────────────────────
-            ws.row_dimensions[2].height = 20
-            for col, txt in enumerate(
-                ["Gruppe / Zeit", "Mitarbeiter 1", "Mitarbeiter 2", "Mitarbeiter 3"],
-                start=1,
-            ):
-                hdr = ws.cell(row=2, column=col, value=txt)
-                hdr.font      = header_font
-                hdr.fill      = header_fill
-                hdr.alignment = center
-                hdr.border    = thin_border
+            # ── Spaltenbreiten ────────────────────────────────────────────
+            # A:B = Gruppe/Zeit  C:D = MA1  E:F = MA2  G:H = MA3
+            for col_letter, w in [
+                ("A", 18), ("B", 18), ("C", 17), ("D", 17),
+                ("E", 17), ("F", 17), ("G", 17), ("H", 17),
+            ]:
+                ws.column_dimensions[col_letter].width = w
 
-            # ── Daten-Zeilen ─────────────────────────────────────────────────
+            # ── Style-Helfer ──────────────────────────────────────────────
+            def _fn(bold=True, size=22, color="000000"):
+                return Font(name="Arial", bold=bold, size=size, color=color)
+
+            def _fi(hex_color):
+                return PatternFill(start_color=hex_color, end_color=hex_color,
+                                   fill_type="solid")
+
+            def _bd(top="none", bottom="thin", left="none", right="thin",
+                    color="000000"):
+                def _sd(s):
+                    return Side(border_style=s if s != "none" else None, color=color)
+                return Border(left=_sd(left), right=_sd(right),
+                              top=_sd(top),   bottom=_sd(bottom))
+
+            _ctr = Alignment(horizontal="center", vertical="center", wrap_text=True,
+                             indent=1)
+            _lft = Alignment(horizontal="left",   vertical="center", wrap_text=False,
+                             indent=1)
+
+            def _sc(cs, row, val, font, fill=None, align=None, border=None, ce=None):
+                c = ws.cell(row=row, column=cs, value=val)
+                c.font = font
+                if fill:   c.fill  = fill
+                if align:  c.alignment = align
+                if border: c.border = border
+                if ce and ce > cs:
+                    ws.merge_cells(start_row=row, start_column=cs,
+                                   end_row=row,   end_column=ce)
+
+            # ════════════════════════════════════════════════════════════
+            # ZEILE 1 – Titel (3 Blöcke, wie Vorlage)
+            # ════════════════════════════════════════════════════════════
+            ws.row_dimensions[1].height = 52.0
+            _sc(1, 1, "    DRK KV Köln e.V. ",  _fn(size=16), align=_lft, ce=2)
+            _sc(3, 1, "Vorfeldmitarbeiter",    _fn(size=26), align=_ctr, ce=6)
+            _sc(7, 1, "",                      _fn(size=16), align=_lft, ce=8)
+
+            # ════════════════════════════════════════════════════════════
+            # ZEILE 2 – Schwarzer Header (Datum + Spaltenköpfe)
+            # ════════════════════════════════════════════════════════════
+            ws.row_dimensions[2].height = 38.0
+            BK   = _fi("000000")                        # schwarz – druckt klar S/W
+            WF   = _fn(size=22, color="FFFFFF")
+            _mb  = _bd(top="medium", bottom="medium", right="thin", color="FFFFFF")
+            _sc(1, 2, datum_heute.strftime("%d.%m.%Y"), WF, fill=BK,
+                align=_ctr, border=_mb, ce=2)
+            _sc(3, 2, "Mitarbeiter 1", WF, fill=BK, align=_ctr, border=_mb, ce=4)
+            _sc(5, 2, "Mitarbeiter 2", WF, fill=BK, align=_ctr, border=_mb, ce=6)
+            _sc(7, 2, "Mitarbeiter 3", WF, fill=BK, align=_ctr, border=_mb, ce=8)
+
+            # ════════════════════════════════════════════════════════════
+            # ZEILEN 3-5 – Gruppen (kein Farbhintergrund)
+            # Gruppenname: fett + dicke Rahmen oben/unten zur Abgrenzung
+            # ════════════════════════════════════════════════════════════
             groups = [
                 ("Gruppe 1\n09:00 – 14:00 Uhr", "gr1"),
                 ("Gruppe 2\n14:00 – 19:00 Uhr", "gr2"),
                 ("Gruppe 3\n19:00 – 00:00 Uhr", "gr3"),
             ]
-            for g_idx, (group_label, group_key) in enumerate(groups):
-                row = 3 + g_idx
-                ws.row_dimensions[row].height = 36
+            _lbl_bd  = _bd(top="medium", bottom="medium", left="medium", right="thin")
+            _data_bd = _bd(top="medium", bottom="medium", right="thin")
 
-                lbl = ws.cell(row=row, column=1, value=group_label)
-                lbl.font      = group_fonts[g_idx]
-                lbl.fill      = group_fills[g_idx]
-                lbl.alignment = center
-                lbl.border    = thin_border
+            for g_idx, (group_label, group_key) in enumerate(groups):
+                data_row = 3 + g_idx
+                ws.row_dimensions[data_row].height = 52.0
+
+                _sc(1, data_row, group_label, _fn(size=22),
+                    align=_ctr, border=_lbl_bd, ce=2)
 
                 for slot in range(1, 4):
                     key   = f"vorfeld_{group_key}_{slot}"
                     entry = self._vorfeld_entries.get(key)
-                    val   = entry["line"].text().strip() if entry else ""
-                    dc    = ws.cell(row=row, column=1 + slot, value=val if val else None)
-                    dc.font      = data_font
-                    dc.alignment = center
-                    dc.border    = thin_border
+                    name  = entry["line"].text().strip() if entry else ""
+                    if name:
+                        # Schichttyp + Sonderfunktionen als Suffix
+                        tags: list[str] = []
+                        kat = self._alle_kat.get(name, "")
+                        if kat:
+                            tags.append(kat)
+                        if name in self._alle_bulmor:
+                            tags.append("B")
+                        if name in self._alle_emobby:
+                            tags.append("EM")
+                        val = f"{name} [{', '.join(tags)}]" if tags else name
+                    else:
+                        val = None
+                    col_s = 3 + (slot - 1) * 2      # C, E, G
+                    _sc(col_s, data_row,
+                        val,
+                        _fn(size=22),
+                        align=_ctr, border=_data_bd, ce=col_s + 1)
+
+            # ════════════════════════════════════════════════════════════
+            # ZEILEN 6-7 – Fußzeile (Bearbeitung / Version)
+            # Prüfung entfernt; Bearbeitung = Groß
+            # ════════════════════════════════════════════════════════════
+            ws.row_dimensions[6].height = 16.0
+            ws.row_dimensions[7].height = 16.0
+            _ff  = _fn(bold=True,  size=12)
+            _ff2 = _fn(bold=False, size=12)
+            _fb  = _bd(top="thin", bottom="thin", left="thin", right="thin")
+
+            # Labels
+            _sc(1, 6, "Bearbeitung", _ff,  align=_ctr, border=_fb, ce=2)
+            _sc(3, 6, "",            _ff,  align=_ctr, border=_fb, ce=6)   # leer
+            _sc(7, 6, "Version",     _ff,  align=_ctr, border=_fb, ce=8)
+            # Werte
+            _sc(1, 7, "Groß",        _ff2, align=_ctr, border=_fb, ce=2)
+            _sc(3, 7, datum_heute.strftime("%d.%m.%Y"), _ff2,
+                align=_ctr, border=_fb, ce=6)
+            _sc(7, 7, "1.0",         _ff2, align=_ctr, border=_fb, ce=8)
 
             wb.save(str(output_path))
 
@@ -1157,48 +1220,74 @@ class SonderaufgabenWidget(QWidget):
     # ── Drucken ─────────────────────────────────────────────────────────────
 
     def _print(self):
-        """Druckdialog: Auswahl was und wie oft gedruckt werden soll."""
-        dlg = QDialog(self)
-        dlg.setWindowTitle("🖨️ Drucken")
-        dlg.setMinimumWidth(380)
-        dlg_layout = QVBoxLayout(dlg)
-        dlg_layout.setSpacing(12)
-        dlg_layout.setContentsMargins(20, 20, 20, 16)
-
-        lbl_was = QLabel("<b>Was soll gedruckt werden?</b>")
-        lbl_was.setStyleSheet(f"color: {FIORI_TEXT}; font-size: 13px;")
-        dlg_layout.addWidget(lbl_was)
-
-        cb_sonder = QCheckBox("Sonderaufgaben")
-        cb_sonder.setChecked(True)
-        cb_sonder.setStyleSheet(f"color: {FIORI_TEXT}; font-size: 12px;")
-        dlg_layout.addWidget(cb_sonder)
-
-        cb_vorfeld = QCheckBox("Vorfeldmitarbeiterliste")
-        cb_vorfeld.setChecked(len(self._vorfeld_entries) > 0)
-        cb_vorfeld.setStyleSheet(f"color: {FIORI_TEXT}; font-size: 12px;")
-        dlg_layout.addWidget(cb_vorfeld)
-
-        dlg_layout.addSpacing(8)
-
-        anzahl_row = QHBoxLayout()
-        lbl_anzahl = QLabel("Anzahl Ausdrucke:")
-        lbl_anzahl.setStyleSheet(f"color: {FIORI_TEXT}; font-size: 12px;")
-        spin = QSpinBox()
-        spin.setMinimum(1)
-        spin.setMaximum(20)
-        spin.setValue(1)
-        spin.setFixedWidth(70)
-        spin.setStyleSheet(
+        """Druckdialog: Auswahl was und wie oft (pro Dokument) gedruckt werden soll."""
+        _SPIN_STYLE = (
             "QSpinBox { border: 1px solid #c8d2dc; border-radius: 3px;"
             " padding: 4px; font-size: 12px; }"
+            "QSpinBox:disabled { color: #aaa; background: #f5f5f5; }"
         )
-        anzahl_row.addWidget(lbl_anzahl)
-        anzahl_row.addWidget(spin)
-        anzahl_row.addStretch()
-        dlg_layout.addLayout(anzahl_row)
+        _LBL_STYLE  = f"color: {FIORI_TEXT}; font-size: 12px;"
+        _HEAD_STYLE = f"color: {FIORI_TEXT}; font-size: 13px;"
 
-        dlg_layout.addSpacing(8)
+        def _make_spin(default: int) -> QSpinBox:
+            s = QSpinBox()
+            s.setMinimum(1)
+            s.setMaximum(20)
+            s.setValue(default)
+            s.setFixedWidth(70)
+            s.setStyleSheet(_SPIN_STYLE)
+            return s
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("🖨️ Drucken")
+        dlg.setMinimumWidth(420)
+        dlg_layout = QVBoxLayout(dlg)
+        dlg_layout.setSpacing(10)
+        dlg_layout.setContentsMargins(20, 20, 20, 16)
+
+        # ── Kopfzeile ────────────────────────────────────────────────────
+        lbl_was = QLabel("<b>Was soll gedruckt werden?</b>")
+        lbl_was.setStyleSheet(_HEAD_STYLE)
+        dlg_layout.addWidget(lbl_was)
+
+        # ── Trennlinie (optisch) ──────────────────────────────────────────
+        from PySide6.QtWidgets import QFrame
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #c8d2dc;")
+        dlg_layout.addWidget(sep)
+
+        # ── Hilfsfunktion: eine Dokument-Zeile bauen ─────────────────────
+        def _doc_row(label: str, checked: bool, default_copies: int):
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            cb = QCheckBox(label)
+            cb.setChecked(checked)
+            cb.setStyleSheet(_LBL_STYLE)
+            cb.setMinimumWidth(220)
+            lbl_x = QLabel("×")
+            lbl_x.setStyleSheet(_LBL_STYLE)
+            spin = _make_spin(default_copies)
+            spin.setEnabled(checked)
+            cb.toggled.connect(spin.setEnabled)
+            row.addWidget(cb)
+            row.addWidget(lbl_x)
+            row.addWidget(spin)
+            row.addStretch()
+            dlg_layout.addLayout(row)
+            return cb, spin
+
+        cb_sonder,  spin_sonder  = _doc_row("Sonderaufgaben",        True,  2)
+        cb_vorfeld, spin_vorfeld = _doc_row(
+            "Vorfeldmitarbeiterliste",
+            len(self._vorfeld_entries) > 0,
+            3,
+        )
+
+        dlg_layout.addSpacing(6)
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("color: #c8d2dc;")
+        dlg_layout.addWidget(sep2)
 
         btn_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -1214,7 +1303,8 @@ class SonderaufgabenWidget(QWidget):
 
         drucke_sonder  = cb_sonder.isChecked()
         drucke_vorfeld = cb_vorfeld.isChecked()
-        anzahl = spin.value()
+        anzahl_sonder  = spin_sonder.value()
+        anzahl_vorfeld = spin_vorfeld.value()
 
         if not drucke_sonder and not drucke_vorfeld:
             QMessageBox.information(
@@ -1224,7 +1314,9 @@ class SonderaufgabenWidget(QWidget):
             return
 
         # ── Dateien vorbereiten ───────────────────────────────────────────
-        dateien: list[Path] = []
+        # Liste von (Pfad, Anzahl)-Tupeln
+        druckjobs: list[tuple[Path, int]] = []
+
         if drucke_sonder:
             saved = self._save(silent=True)
             if not saved:
@@ -1233,7 +1325,7 @@ class SonderaufgabenWidget(QWidget):
                     "Sonderaufgaben konnten nicht gespeichert werden."
                 )
                 return
-            dateien.append(saved)
+            druckjobs.append((saved, anzahl_sonder))
 
         if drucke_vorfeld:
             saved_vf = self._save_vorfeld(silent=True)
@@ -1243,29 +1335,44 @@ class SonderaufgabenWidget(QWidget):
                     "Vorfeldmitarbeiterliste konnte nicht gespeichert werden."
                 )
                 return
-            dateien.append(saved_vf)
+            druckjobs.append((saved_vf, anzahl_vorfeld))
 
-        if not dateien:
+        if not druckjobs:
             return
 
-        # ── Drucken ───────────────────────────────────────────────────────
-        try:
-            import os as _os
-            import shutil as _shutil
-            import time as _time
-            import tempfile as _tmp
+        # ── Drucken via PowerShell-COM (zuverlässig, wartet auf Abschluss) ──
+        def _drucke_excel(pfad: Path, copies: int = 1) -> None:
+            """Excel-Datei über PowerShell COM-Automation drucken.
 
-            for i in range(anzahl):
-                for datei in dateien:
-                    tmp = Path(_tmp.mktemp(suffix=".xlsx", dir=datei.parent))
-                    _shutil.copy2(datei, tmp)
-                    try:
-                        _os.startfile(str(tmp), "print")
-                    except Exception:
-                        tmp.unlink(missing_ok=True)
-                        raise
-                    if len(dateien) > 1 or i < anzahl - 1:
-                        _time.sleep(3)
+            Im Gegensatz zu os.startfile("print") wartet diese Methode, bis
+            der Druckauftrag vollständig an den Drucker übergeben wurde,
+            bevor sie zurückkehrt.  Dadurch können mehrere Dateien
+            nacheinander gedruckt werden ohne Race-Condition.
+            """
+            import subprocess
+            safe = str(pfad).replace("'", "''")
+            ps = (
+                "$xl = New-Object -ComObject Excel.Application; "
+                "$xl.Visible = $false; $xl.DisplayAlerts = $false; "
+                f"$wb = $xl.Workbooks.Open('{safe}'); "
+                "$m = [System.Type]::Missing; "
+                f"$wb.PrintOut($m, $m, {copies}, $false, $m, $false, $true); "
+                "$wb.Close($false); "
+                "$xl.Quit(); "
+                "[System.Runtime.InteropServices.Marshal]::ReleaseComObject($xl) | Out-Null"
+            )
+            result = subprocess.run(
+                ["powershell", "-NonInteractive", "-WindowStyle", "Hidden",
+                 "-Command", ps],
+                capture_output=True, timeout=120,
+            )
+            if result.returncode != 0:
+                err = result.stderr.decode("utf-8", errors="replace").strip()
+                raise RuntimeError(err or "Unbekannter Druckfehler (PowerShell)")
+
+        try:
+            for datei, copies in druckjobs:
+                _drucke_excel(datei, copies)
         except Exception as exc:
             QMessageBox.critical(self, "Fehler", f"Drucken fehlgeschlagen:\n{exc}")
 
