@@ -331,17 +331,23 @@ class DashboardWidget(QWidget):
         self._kalender.activated.connect(self._kalender_tag_geklickt)
         linke.addWidget(self._kalender)
 
-        # Termin-Liste
+        # ── Termin-Kachel + Vorfeld-Kachel nebeneinander ─────────────────
+        termin_vorfeld_row = QHBoxLayout()
+        termin_vorfeld_row.setSpacing(10)
+
+        # Linke Hälfte: Bevorstehende Fahrzeug-Termine
+        termin_vbox = QVBoxLayout()
+        termin_vbox.setSpacing(4)
         termin_hdr = QLabel("📌  Bevorstehende Fahrzeug-Termine")
         termin_hdr.setFont(QFont("Arial", 11, QFont.Weight.Bold))
         termin_hdr.setStyleSheet(f"color: {FIORI_TEXT};")
-        linke.addWidget(termin_hdr)
+        termin_vbox.addWidget(termin_hdr)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setMinimumHeight(140)
-        scroll.setMaximumHeight(260)
+        scroll.setMaximumHeight(200)
         scroll.setStyleSheet("background: transparent;")
         self._termin_container = QWidget()
         self._termin_container.setStyleSheet("background: transparent;")
@@ -349,7 +355,34 @@ class DashboardWidget(QWidget):
         self._termin_layout.setSpacing(5)
         self._termin_layout.setContentsMargins(0, 0, 0, 0)
         scroll.setWidget(self._termin_container)
-        linke.addWidget(scroll)
+        termin_vbox.addWidget(scroll)
+        termin_vorfeld_row.addLayout(termin_vbox, 1)
+
+        # Rechte Hälfte: Vorfeldmitarbeiter aus Sonderaufgaben-Historie
+        vorfeld_vbox = QVBoxLayout()
+        vorfeld_vbox.setSpacing(3)
+        vorfeld_hdr = QLabel("👷  Vorfeldmitarbeiter")
+        vorfeld_hdr.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        vorfeld_hdr.setStyleSheet(f"color: {FIORI_TEXT};")
+        vorfeld_vbox.addWidget(vorfeld_hdr)
+
+        self._vorfeld_kachel_datum_lbl = QLabel("")
+        self._vorfeld_kachel_datum_lbl.setStyleSheet(
+            "color: #888; font-size: 10px; font-style: italic;"
+        )
+        vorfeld_vbox.addWidget(self._vorfeld_kachel_datum_lbl)
+
+        # Kein ScrollArea – direkt eingebettetes Widget ohne Scrollen
+        self._vorfeld_kachel_container = QWidget()
+        self._vorfeld_kachel_container.setStyleSheet("background: transparent;")
+        self._vorfeld_kachel_layout = QVBoxLayout(self._vorfeld_kachel_container)
+        self._vorfeld_kachel_layout.setSpacing(2)
+        self._vorfeld_kachel_layout.setContentsMargins(0, 0, 0, 0)
+        vorfeld_vbox.addWidget(self._vorfeld_kachel_container)
+        vorfeld_vbox.addStretch()
+        termin_vorfeld_row.addLayout(vorfeld_vbox, 1)
+
+        linke.addLayout(termin_vorfeld_row)
 
         # Krankmeldungen aktueller Monat
         from PySide6.QtWidgets import QPushButton as _QPB2
@@ -895,6 +928,78 @@ class DashboardWidget(QWidget):
             mehr.setStyleSheet("color: #888; font-size: 11px; padding: 2px 4px;")
             self._termin_layout.addWidget(mehr)
 
+    # ── Vorfeld-Kachel ───────────────────────────────────────────────────
+
+    def _lade_vorfeld_kachel(self):
+        """Lädt den aktuellsten Sonderaufgaben-Snapshot und zeigt die Vorfeldmitarbeiter."""
+        # Container leeren
+        while self._vorfeld_kachel_layout.count():
+            item = self._vorfeld_kachel_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        try:
+            from database import sonderaufgaben_db
+            snapshots = sonderaufgaben_db.get_snapshots(limit=1)
+            if not snapshots:
+                leer = QLabel("Keine Einträge vorhanden")
+                leer.setStyleSheet("color: #aaa; font-size: 11px; font-style: italic; padding: 4px 0;")
+                self._vorfeld_kachel_layout.addWidget(leer)
+                self._vorfeld_kachel_datum_lbl.setText("")
+                return
+            snap_meta = snapshots[0]
+            snap = sonderaufgaben_db.get_snapshot_by_id(snap_meta["id"])
+            if not snap:
+                return
+        except Exception:
+            leer = QLabel("Fehler beim Laden")
+            leer.setStyleSheet("color: #bb0000; font-size: 11px; padding: 4px 0;")
+            self._vorfeld_kachel_layout.addWidget(leer)
+            self._vorfeld_kachel_datum_lbl.setText("")
+            return
+
+        datum = snap.get("datum") or snap_meta.get("datum") or ""
+        gespeichert = snap.get("gespeichert_am", "")
+        self._vorfeld_kachel_datum_lbl.setText(
+            f"vom {datum}  (gespeichert: {gespeichert[:16]})" if gespeichert else f"vom {datum}"
+        )
+
+        vorfeld: dict = snap.get("vorfeld") or {}
+
+        _GRUPPEN = [
+            ("gr1", "Gr. 1  09–14 Uhr", "#1B5E20"),
+            ("gr2", "Gr. 2  14–19 Uhr", "#E65100"),
+            ("gr3", "Gr. 3  19–00 Uhr", "#4527A0"),
+        ]
+
+        hat_eintraege = False
+        for group_key, group_label, group_color in _GRUPPEN:
+            namen = [
+                vorfeld.get(f"vorfeld_{group_key}_{slot}", "").strip()
+                for slot in range(1, 4)
+            ]
+            namen = [n for n in namen if n]
+            if not namen:
+                continue
+            hat_eintraege = True
+            # Kompakte Einzeilen-Darstellung: Farbiger Badge + Namen kommasepariert
+            namen_str = ",  ".join(namen)
+            grp_lbl = QLabel(
+                f"<span style='font-weight:bold; color:{group_color};'>{group_label}:</span>"
+                f"&nbsp;&nbsp;<span style='color:#333;'>{namen_str}</span>"
+            )
+            grp_lbl.setWordWrap(True)
+            grp_lbl.setStyleSheet(
+                f"background: white; border-left: 3px solid {group_color};"
+                "border-radius: 3px; padding: 3px 8px; font-size: 12px;"
+            )
+            self._vorfeld_kachel_layout.addWidget(grp_lbl)
+
+        if not hat_eintraege:
+            leer = QLabel("Keine Vorfeldmitarbeiter eingetragen")
+            leer.setStyleSheet("color: #aaa; font-size: 11px; font-style: italic; padding: 4px 0;")
+            self._vorfeld_kachel_layout.addWidget(leer)
+
     # ── Heutiger Dienstplan ─────────────────────────────────────────────────
 
     _MONATSORDNER = {
@@ -1160,6 +1265,9 @@ class DashboardWidget(QWidget):
         self._termine = self._lade_fahrzeug_termine()
         self._markiere_termine()
         self._zeige_termine_liste()
+
+        # Vorfeld-Kachel (letzter Sonderaufgaben-Snapshot)
+        self._lade_vorfeld_kachel()
 
         # Krankmeldungen aktueller Monat
         self._lade_krankmeldungen()
