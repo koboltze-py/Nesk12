@@ -28,6 +28,7 @@ from config import (
     FIORI_SUCCESS, FIORI_WARNING,
 )
 from functions.settings_functions import get_setting
+from database import sonderaufgaben_db
 
 # ── Pfad zur Excel-Vorlage ─────────────────────────────────────────────────
 TEMPLATE_PATH = Path(BASE_DIR) / "Daten" / "Sonderaufgaben" / "Sonderaufgaben.xlsx"
@@ -815,7 +816,7 @@ class SonderaufgabenWidget(QWidget):
 
     # ── Speichern ───────────────────────────────────────────────────────────
 
-    def _save(self, silent: bool = False) -> Path | None:
+    def _save(self, silent: bool = False, aktion: str = "speichern") -> Path | None:
         """Sonderaufgaben in Excel speichern."""
         try:
             import openpyxl
@@ -899,6 +900,12 @@ class SonderaufgabenWidget(QWidget):
             except Exception:
                 pass
             self.reload_tree()   # Baum nach Speichern aktualisieren
+
+            # ── Snapshot in Datenbank speichern ────────────────────────────
+            try:
+                self._db_save_snapshot(aktion=aktion, excel_datei=str(output_path))
+            except Exception:
+                pass  # DB-Fehler darf den Excel-Speichervorgang nicht abbrechen
 
             if not silent:
                 antwort = QMessageBox.question(
@@ -1318,7 +1325,7 @@ class SonderaufgabenWidget(QWidget):
         druckjobs: list[tuple[Path, int]] = []
 
         if drucke_sonder:
-            saved = self._save(silent=True)
+            saved = self._save(silent=True, aktion="drucken")
             if not saved:
                 QMessageBox.warning(
                     self, "Fehler",
@@ -1375,6 +1382,15 @@ class SonderaufgabenWidget(QWidget):
                 _drucke_excel(datei, copies)
         except Exception as exc:
             QMessageBox.critical(self, "Fehler", f"Drucken fehlgeschlagen:\n{exc}")
+            return
+
+        # Nur Vorfeldliste gedruckt (kein Sonderaufgaben-Excel) → DB-Eintrag nachholen
+        if not drucke_sonder and drucke_vorfeld:
+            try:
+                excel_pfad = str(druckjobs[0][0]) if druckjobs else ""
+                self._db_save_snapshot(aktion="drucken", excel_datei=excel_pfad)
+            except Exception:
+                pass
 
     # ── Dateibaum ────────────────────────────────────────────────────────────
 
@@ -1494,6 +1510,53 @@ class SonderaufgabenWidget(QWidget):
 
         except Exception as exc:
             QMessageBox.critical(self, "Fehler", f"Fehler beim Laden:\n{exc}")
+
+    # ── Datenbank-Hilfsmethoden ──────────────────────────────────────────────
+
+    def _collect_entries(self) -> tuple[dict[str, str], dict[str, str]]:
+        """Sammelt alle aktuellen Formulareingaben als flache Dicts (key → Text)."""
+        entries = {k: v["line"].text().strip() for k, v in self._entries.items()}
+        vorfeld = {k: v["line"].text().strip() for k, v in self._vorfeld_entries.items()}
+        return entries, vorfeld
+
+    def _db_save_snapshot(self, aktion: str = "speichern", excel_datei: str = "") -> None:
+        """Speichert einen Snapshot aller Formulardaten in der SQLite-Datenbank."""
+        entries, vorfeld = self._collect_entries()
+        datum_heute = datetime.now().strftime("%d.%m.%Y")
+        sonderaufgaben_db.save_snapshot(
+            datum=datum_heute,
+            entries=entries,
+            vorfeld=vorfeld,
+            bemerkung=self._bemerkung.toPlainText().strip(),
+            dienstplan_pfad=self._dienstplan_pfad,
+            excel_datei=excel_datei,
+            aktion=aktion,
+        )
+
+    def load_from_db_snapshot(self, snap: dict) -> None:
+        """Lädt einen DB-Snapshot in das Formular.
+
+        snap muss folgende Schlüssel enthalten (wie von sonderaufgaben_db.get_snapshot_by_id):
+        - entries: dict[str, str]
+        - vorfeld: dict[str, str]
+        - bemerkung: str
+        """
+        entries: dict[str, str] = snap.get("entries") or {}
+        vorfeld: dict[str, str] = snap.get("vorfeld") or {}
+        bemerkung: str = snap.get("bemerkung") or ""
+
+        # Formularfelder befüllen
+        for key, val in entries.items():
+            entry = self._entries.get(key)
+            if entry:
+                entry["line"].setText(val)
+
+        for key, val in vorfeld.items():
+            entry = self._vorfeld_entries.get(key)
+            if entry:
+                entry["line"].setText(val)
+
+        self._bemerkung.setPlainText(bemerkung)
 
     def reload_tree(self):
         """Baum neu aufbauen (nach Speichern oder manuell)."""
