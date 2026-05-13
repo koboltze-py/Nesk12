@@ -172,7 +172,7 @@ from gui.mitarbeiter            import MitarbeiterHauptWidget
 from gui.hilfe_dialog           import HilfeDialog
 from gui.dienstliches           import DienstlichesWidget
 from gui.telefonnummern         import TelefonnummernWidget
-from gui.call_transcription     import CallTranscriptionWidget
+from gui.handys_widget          import HandysWidget
 from gui.backup_widget          import BackupWidget
 from gui.passagiere             import PassagiereWidget
 from gui.vorkommnisse           import VorkommnisseWidget
@@ -190,7 +190,7 @@ NAV_ITEMS = [
     ("📊", "Bericht",             8),
     ("✈️",  "Passagiere",        9),
     ("📞", "Telefonnummern",     10),
-    ("♿", "Call Transcription",  11),
+    ("📱", "Handys",             11),
     ("💾", "Backup",             12),
     ("⚙️",  "Einstellungen",    13),
     ("⚠️",  "Vorkommnisse",     14),
@@ -208,7 +208,7 @@ NAV_TOOLTIPS = [
     "Kombinierten Bericht aus Verspätungen, Schulungen, Einsätzen und Patienten als Excel exportieren oder per E-Mail senden",
     "Passagieranfragen verarbeiten und Beschwerden erfassen und verwalten",
     "Telefonnummern-Verzeichnis: FKB Gate-/Check-In-Nummern und DRK-Kontakte",
-    "Anrufprotokoll: Anrufinhalte mit Textbausteinen schnell erfassen und verwalten",
+    "Diensthandys verwalten: Status, Zustand, Historie, Excel-Export und E-Mail",
     "Datensicherung erstellen und wiederherstellen",
     "App-Einstellungen, Pfade und E-Mobby-Fahrerliste",
     "Vorkommnisse erfassen und verwalten",
@@ -404,7 +404,7 @@ class MainWindow(QMainWindow):
         self._code19_page            = Code19Widget()
         self._bericht_page           = BerichtWidget()
         self._telefonnummern_page    = TelefonnummernWidget()
-        self._call_transcription_page = CallTranscriptionWidget()
+        self._handys_page            = HandysWidget()
         self._backup_page            = BackupWidget()
         self._settings_page          = EinstellungenWidget()
         self._passagiere_page        = PassagiereWidget()
@@ -417,7 +417,7 @@ class MainWindow(QMainWindow):
                      self._bericht_page,
                      self._passagiere_page,
                      self._telefonnummern_page,
-                     self._call_transcription_page,
+                     self._handys_page,
                      self._backup_page, self._settings_page,
                      self._vorkommnisse_page]:
             self._stack.addWidget(page)
@@ -524,7 +524,7 @@ class MainWindow(QMainWindow):
             7: self._code19_page.refresh,
             8: self._passagiere_page.refresh,
             9: self._telefonnummern_page.refresh,
-            10: self._call_transcription_page.refresh,
+            10: self._handys_page.refresh,
         }
         if index in page_map:
             QTimer.singleShot(0, page_map[index])

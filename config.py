@@ -84,3 +84,8 @@ BESCHWERDEN_DB_PATH   = os.path.join(_DB_DIR, "beschwerden.db")
 SANMAT_DB_PATH        = os.path.join(_DB_DIR, "sanmat.db")
 VORKOMMNISSE_DB_PATH  = os.path.join(_DB_DIR, "vorkommnisse.db")
 NOTIZEN_DB_PATH       = os.path.join(_DB_DIR, "notizen.db")
+HANDYS_DB_PATH        = os.path.join(_DB_DIR, "handys.db")
+
+# ─── Handys-Modul ─────────────────────────────────────────────────────────────
+HANDYS_EXPORT_PATH    = os.path.join(BASE_DIR, "Daten", "Handys")
+HANDYS_EMAIL_EMPFAENGER = "erste-hilfe-station-flughafen@drk-koeln.de"
