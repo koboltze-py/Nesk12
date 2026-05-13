@@ -378,6 +378,13 @@ def main():
         except Exception as e:
             print(f"[WARNUNG] Mitarbeiter-DB Initialisierung fehlgeschlagen: {e}")
 
+        # Handys-DB
+        try:
+            from functions.handys_db import init_handys_db
+            init_handys_db()
+        except Exception as e:
+            print(f"[WARNUNG] Handys-DB Initialisierung fehlgeschlagen: {e}")
+
         # Turso-Sync
         try:
             from database.turso_sync import (

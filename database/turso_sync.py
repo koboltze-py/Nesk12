@@ -82,6 +82,9 @@ TABLE_MAP: dict[tuple[str, str], str] = {
     ("beschwerden.db", "beschwerde_antworten"):     "bschw__antworten",
     # vorkommnisse.db
     ("vorkommnisse.db", "vorkommnisse"):            "vork__vorkommnisse",
+    # handys.db
+    ("handys.db", "handys"):                        "handys__handys",
+    ("handys.db", "handys_historie"):               "handys__historie",
 }
 
 # Umgekehrtes Mapping: turso_tabelle → (db_pfad_key, lokale_tabelle)
