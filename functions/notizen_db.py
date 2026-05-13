@@ -62,6 +62,14 @@ def als_erledigt(nid: int):
         conn.commit()
 
 
+def als_offen(nid: int):
+    """Status zurück auf 'offen' setzen (Erledigt rückgängig)."""
+    _init_db()
+    with _get_conn() as conn:
+        conn.execute("UPDATE notizen SET status='offen' WHERE id=?", (nid,))
+        conn.commit()
+
+
 def loeschen(nid: int):
     """Notiz dauerhaft löschen."""
     _init_db()
@@ -83,6 +91,57 @@ def lade_aktive() -> list[dict]:
             (grenze,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def lade_fenster() -> list[dict]:
+    """
+    Notizen deren `datum` im Fenster [heute-5 Tage … heute+10 Tage] liegt.
+    Sortiert nach datum aufsteigend (Vergangenheit → Zukunft).
+    """
+    _init_db()
+    heute = datetime.today().date()
+    von   = heute - timedelta(days=5)
+    bis   = heute + timedelta(days=10)
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM notizen ORDER BY datum ASC, erstellt_am ASC"
+        ).fetchall()
+    ergebnis = []
+    for r in rows:
+        row = dict(r)
+        try:
+            d = datetime.strptime(row["datum"], "%d.%m.%Y").date()
+            if von <= d <= bis:
+                ergebnis.append(row)
+        except ValueError:
+            pass
+    return ergebnis
+
+
+def lade_zukunft() -> list[dict]:
+    """
+    Notizen der nächsten 10 Tage (ab morgen), anhand des Feldes `datum` (dd.MM.yyyy).
+    Gibt alle Status zurück, sortiert nach datum aufsteigend.
+    """
+    _init_db()
+    heute = datetime.today()
+    morgen = heute + timedelta(days=1)
+    in_10 = heute + timedelta(days=10)
+    # Alle Notizen laden und im Python filtern (datum ist kein ISO-Format)
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM notizen ORDER BY datum ASC, erstellt_am ASC"
+        ).fetchall()
+    ergebnis = []
+    for r in rows:
+        row = dict(r)
+        try:
+            d = datetime.strptime(row["datum"], "%d.%m.%Y")
+            if morgen.date() <= d.date() <= in_10.date():
+                ergebnis.append(row)
+        except ValueError:
+            pass
+    return ergebnis
 
 
 def lade_alle() -> list[dict]:
