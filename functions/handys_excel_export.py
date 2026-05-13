@@ -55,7 +55,7 @@ SPALTEN_HISTORIE = [
 
 FELDER_UEBERSICHT = [
     "inventarnummer", "hersteller", "modell", "rufnummer",
-    "sim_nummer", "standort", "zustand", "defekt_beschreibung",
+    "kartennummer", "standort", "zustand", "defekt_beschreibung",
     "defekt_datum", "defekt_gemeldet_von",
     "anschaffungsdatum", "geaendert_am",
 ]
