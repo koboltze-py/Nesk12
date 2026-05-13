@@ -1149,6 +1149,19 @@ class VorkommnisseWidget(QWidget):
                 pfad_data = sel[0].data(Qt.ItemDataRole.UserRole)
                 if pfad_data and os.path.isfile(pfad_data):
                     anhang_pfad = pfad_data
+
+            # Vorfall automatisch speichern, falls noch nicht gespeichert
+            if self._current_id is None:
+                _daten = self._sammle_daten()
+                if _daten.get("flug"):
+                    try:
+                        from functions.vorkommnisse_db import speichern as _vk_speichern
+                        self._current_id = _vk_speichern(_daten)
+                        self._aktualisiere_status()
+                        self._aktualisiere_liste()
+                    except Exception:
+                        pass
+
             dlg.accept()
             self._erstelle_outlook_entwurf(betreff, mailtext, anhang_pfad)
 

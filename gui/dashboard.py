@@ -461,6 +461,18 @@ class DashboardWidget(QWidget):
         )
         self._notiz_neu_btn.clicked.connect(self._neue_notiz_dialog)
         notiz_hdr_row.addWidget(self._notiz_neu_btn)
+
+        self._notiz_archiv_btn = _QPB3("🗄️  Archiv")
+        self._notiz_archiv_btn.setToolTip("Alle Notizen im Archiv anzeigen")
+        self._notiz_archiv_btn.setFixedHeight(26)
+        self._notiz_archiv_btn.setStyleSheet(
+            "QPushButton { font-size: 11px; padding: 2px 10px; "
+            "background: #ede7f6; color: #4527a0; border: 1px solid #b39ddb; "
+            "border-radius: 4px; } "
+            "QPushButton:hover { background: #d1c4e9; }"
+        )
+        self._notiz_archiv_btn.clicked.connect(self._notiz_archiv_dialog)
+        notiz_hdr_row.addWidget(self._notiz_archiv_btn)
         linke.addLayout(notiz_hdr_row)
 
         self._notiz_scroll = QScrollArea()
@@ -1515,6 +1527,16 @@ class DashboardWidget(QWidget):
                     btn_gelesen.clicked.connect(lambda _, _nid=nid: self._notiz_als_gelesen(_nid))
                     btn_row.addWidget(btn_gelesen)
 
+                if status == "erledigt":
+                    btn_rueck = _QPB4("↩️  Rükg.")
+                    btn_rueck.setFixedHeight(20)
+                    btn_rueck.setToolTip("Erledigt rükgängig machen")
+                    btn_rueck.setStyleSheet(_BTN_MINI.format(
+                        bg="#fff9c4", fg="#f57f17", bd="#fff176", hv="#fff176"
+                    ))
+                    btn_rueck.clicked.connect(lambda _, _nid=nid: self._notiz_als_offen(_nid))
+                    btn_row.addWidget(btn_rueck)
+
                 if status != "erledigt":
                     btn_erledigt = _QPB4("✅  Erledigt")
                     btn_erledigt.setFixedHeight(20)
@@ -1546,6 +1568,14 @@ class DashboardWidget(QWidget):
             pass
         self._zeige_notizen()
 
+    def _notiz_als_offen(self, nid: int):
+        try:
+            from functions.notizen_db import als_offen
+            als_offen(nid)
+        except Exception:
+            pass
+        self._zeige_notizen()
+
     def _notiz_als_erledigt(self, nid: int):
         try:
             from functions.notizen_db import als_erledigt
@@ -1571,6 +1601,171 @@ class DashboardWidget(QWidget):
             pass
         self._zeige_notizen()
         self._markiere_termine()
+
+    def _notiz_archiv_dialog(self):
+        """Dialog: alle Notizen aus der Datenbank anzeigen (Archiv)."""
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+            QPushButton, QScrollArea, QWidget, QFrame,
+        )
+        from PySide6.QtCore import Qt
+
+        try:
+            from functions.notizen_db import lade_alle, loeschen as _notiz_loeschen_db
+        except Exception:
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("🗄️  Notizen-Archiv")
+        dlg.setMinimumSize(560, 520)
+        dlg.setStyleSheet("QDialog { background: #f5f5f5; }")
+
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(14, 12, 14, 12)
+        outer.setSpacing(8)
+
+        # Suchzeile
+        such_row = QHBoxLayout()
+        such_lbl = QLabel("🔍  Suche:")
+        such_lbl.setFixedWidth(60)
+        such_edit = QLineEdit()
+        such_edit.setPlaceholderText("Titel oder Text filtern …")
+        such_edit.setStyleSheet(
+            "QLineEdit { border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; background: white; }"
+        )
+        such_row.addWidget(such_lbl)
+        such_row.addWidget(such_edit)
+        outer.addLayout(such_row)
+
+        # Scroll-Bereich
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        liste_layout = QVBoxLayout(container)
+        liste_layout.setSpacing(4)
+        liste_layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
+
+        _WOCHENTAGE = ["Mo","Di","Mi","Do","Fr","Sa","So"]
+        _MONATE_K   = ["","Jan","Feb","Mrz","Apr","Mai","Jun",
+                       "Jul","Aug","Sep","Okt","Nov","Dez"]
+        _STATUS_FARBEN = {
+            "offen":    ("#2e7d32", "#e8f5e9", "#1b5e20"),
+            "gelesen":  ("#1976d2", "#e3f2fd", "#1565c0"),
+            "erledigt": ("#9e9e9e", "#f5f5f5", "#616161"),
+        }
+
+        def _render(filter_text: str = ""):
+            # Widgets leeren
+            while liste_layout.count():
+                item = liste_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+
+            alle = lade_alle()
+            if filter_text:
+                ft = filter_text.lower()
+                alle = [n for n in alle if ft in n["titel"].lower() or ft in n["text"].lower()]
+
+            if not alle:
+                leer = QLabel("Keine Notizen gefunden.")
+                leer.setStyleSheet("color: #aaa; font-style: italic; padding: 8px;")
+                liste_layout.addWidget(leer)
+                liste_layout.addStretch()
+                return
+
+            from datetime import datetime as _dtt
+            for n in alle:
+                nid    = n["id"]
+                titel  = n["titel"]
+                text   = n["text"]
+                datum  = n["datum"]
+                status = n["status"]
+
+                try:
+                    d  = _dtt.strptime(datum, "%d.%m.%Y").date()
+                    wd = _WOCHENTAGE[d.weekday()]
+                    mo = _MONATE_K[d.month]
+                    datum_txt = f"{wd}, {d.day}. {mo} {d.year}"
+                except ValueError:
+                    datum_txt = datum
+
+                bd, bg, fg = _STATUS_FARBEN.get(status, ("#9e9e9e", "#f5f5f5", "#616161"))
+                status_icon = {"offen": "🟢", "gelesen": "🔵", "erledigt": "✅"}.get(status, "📝")
+
+                card = QFrame()
+                card.setStyleSheet(
+                    f"QFrame {{ background: {bg}; border-left: 3px solid {bd}; "
+                    "border-radius: 4px; margin: 2px 0; }}"
+                )
+                cv = QVBoxLayout(card)
+                cv.setContentsMargins(10, 6, 8, 6)
+                cv.setSpacing(2)
+
+                hdr_row = QHBoxLayout()
+                titel_lbl = QLabel(f"{status_icon}  <b>{titel}</b>")
+                titel_lbl.setStyleSheet(f"color: {fg}; font-size: 12px; border: none;")
+                datum_lbl = QLabel(datum_txt)
+                datum_lbl.setStyleSheet("color: #888; font-size: 10px; border: none;")
+                datum_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                hdr_row.addWidget(titel_lbl)
+                hdr_row.addStretch()
+                hdr_row.addWidget(datum_lbl)
+                cv.addLayout(hdr_row)
+
+                if text:
+                    txt_lbl = QLabel(text)
+                    txt_lbl.setWordWrap(True)
+                    txt_lbl.setStyleSheet(f"color: {fg}; font-size: 11px; border: none;")
+                    cv.addWidget(txt_lbl)
+
+                btn_del = QPushButton("🗑")
+                btn_del.setFixedSize(26, 20)
+                btn_del.setToolTip("Notiz löschen")
+                btn_del.setStyleSheet(
+                    "QPushButton { font-size: 10px; background: #fce8e8; color: #b71c1c; "
+                    "border: 1px solid #ef9a9a; border-radius: 3px; } "
+                    "QPushButton:hover { background: #ef9a9a; }"
+                )
+
+                def _loesche(checked=False, _nid=nid):
+                    from PySide6.QtWidgets import QMessageBox as _QMB
+                    if _QMB.question(
+                        dlg, "Löschen", "Notiz wirklich löschen?",
+                        _QMB.StandardButton.Yes | _QMB.StandardButton.No,
+                        _QMB.StandardButton.No,
+                    ) == _QMB.StandardButton.Yes:
+                        _notiz_loeschen_db(_nid)
+                        _render(such_edit.text().strip())
+                        self._zeige_notizen()
+
+                btn_del.clicked.connect(_loesche)
+                btn_row = QHBoxLayout()
+                btn_row.addStretch()
+                btn_row.addWidget(btn_del)
+                cv.addLayout(btn_row)
+
+                liste_layout.addWidget(card)
+
+            liste_layout.addStretch()
+
+        _render()
+        such_edit.textChanged.connect(lambda t: _render(t.strip()))
+
+        # Schließen-Button
+        btn_close = QPushButton("Schließen")
+        btn_close.clicked.connect(dlg.accept)
+        btn_close.setStyleSheet(
+            "QPushButton { padding: 5px 18px; background: #546e7a; color: white; "
+            "border-radius: 4px; font-size: 12px; } "
+            "QPushButton:hover { background: #37474f; }"
+        )
+        outer.addWidget(btn_close, alignment=Qt.AlignmentFlag.AlignRight)
+
+        dlg.exec()
 
     def _neue_notiz_dialog(self, vorgabe_datum: str = ""):
         """Dialog zum Erstellen einer neuen Notiz."""

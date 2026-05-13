@@ -62,6 +62,14 @@ def als_erledigt(nid: int):
         conn.commit()
 
 
+def als_offen(nid: int):
+    """Status zurück auf 'offen' setzen (Erledigt rückgängig)."""
+    _init_db()
+    with _get_conn() as conn:
+        conn.execute("UPDATE notizen SET status='offen' WHERE id=?", (nid,))
+        conn.commit()
+
+
 def loeschen(nid: int):
     """Notiz dauerhaft löschen."""
     _init_db()
