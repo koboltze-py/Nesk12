@@ -85,6 +85,31 @@ def lade_aktive() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def lade_fenster() -> list[dict]:
+    """
+    Notizen deren `datum` im Fenster [heute-5 Tage … heute+10 Tage] liegt.
+    Sortiert nach datum aufsteigend (Vergangenheit → Zukunft).
+    """
+    _init_db()
+    heute = datetime.today().date()
+    von   = heute - timedelta(days=5)
+    bis   = heute + timedelta(days=10)
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM notizen ORDER BY datum ASC, erstellt_am ASC"
+        ).fetchall()
+    ergebnis = []
+    for r in rows:
+        row = dict(r)
+        try:
+            d = datetime.strptime(row["datum"], "%d.%m.%Y").date()
+            if von <= d <= bis:
+                ergebnis.append(row)
+        except ValueError:
+            pass
+    return ergebnis
+
+
 def lade_zukunft() -> list[dict]:
     """
     Notizen der nächsten 10 Tage (ab morgen), anhand des Feldes `datum` (dd.MM.yyyy).

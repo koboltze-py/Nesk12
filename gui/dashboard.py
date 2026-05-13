@@ -1394,17 +1394,23 @@ class DashboardWidget(QWidget):
     # ── Notizen ───────────────────────────────────────────────────────────────
 
     def _zeige_notizen(self):
-        """Notizen der letzten 5 Tage und der nächsten 10 Tage, nach Datum gruppiert."""
+        """Notizen im Fenster -5 bis +10 Tage (nach Datum-Feld), nach Datum sortiert."""
         while self._notiz_vlayout.count():
             item = self._notiz_vlayout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
         try:
-            from functions.notizen_db import lade_aktive
-            notizen = lade_aktive()
+            from functions.notizen_db import lade_fenster
+            notizen = lade_fenster()
         except Exception:
             notizen = []
+
+        if not notizen:
+            leer = QLabel("Keine Notizen (letzte 5 / nächste 10 Tage)")
+            leer.setStyleSheet("color: #aaa; font-size: 11px; font-style: italic; padding: 4px 2px;")
+            self._notiz_vlayout.addWidget(leer)
+            return
 
         from PySide6.QtWidgets import QPushButton as _QPB4
         from datetime import datetime as _dtt, date as _ddate
@@ -1419,216 +1425,118 @@ class DashboardWidget(QWidget):
         )
         heute = _ddate.today()
 
-        if not notizen:
-            leer = QLabel("Keine aktuellen Notizen (letzte 5 Tage)")
-            leer.setStyleSheet("color: #aaa; font-size: 11px; font-style: italic; padding: 4px 2px;")
-            self._notiz_vlayout.addWidget(leer)
-        else:
-            # Nach Datum gruppieren (Reihenfolge: neueste zuerst)
-            gruppen: dict[str, list] = {}
-            for n in notizen:
-                gruppen.setdefault(n["datum"], []).append(n)
+        # Nach Datum gruppieren (aufsteigend – schon sortiert aus DB)
+        gruppen: dict[str, list] = {}
+        for n in notizen:
+            gruppen.setdefault(n["datum"], []).append(n)
 
-            for datum_str, gruppe in gruppen.items():
-                # ── Tages-Trennlinie ───────────────────────────────────────
-                try:
-                    d = _dtt.strptime(datum_str, "%d.%m.%Y").date()
-                    wd = _WOCHENTAGE[d.weekday()]
-                    mo = _MONATE_K[d.month]
-                    if d == heute:
-                        tag_label = f"🟢  Heute – {wd}, {d.day}. {mo} {d.year}"
-                        hdr_bg    = "#2e7d32"
-                    elif d == heute.replace(day=heute.day - 1) if heute.day > 1 else None:
-                        tag_label = f"🔵  Gestern – {wd}, {d.day}. {mo} {d.year}"
-                        hdr_bg    = "#1565a8"
-                    else:
-                        tag_label = f"📍  {wd}, {d.day}. {mo} {d.year}"
-                        hdr_bg    = "#546e7a"
-                except ValueError:
-                    tag_label = f"📍  {datum_str}"
+        for datum_str, gruppe in gruppen.items():
+            try:
+                d = _dtt.strptime(datum_str, "%d.%m.%Y").date()
+                wd = _WOCHENTAGE[d.weekday()]
+                mo = _MONATE_K[d.month]
+                delta = (d - heute).days
+                if d == heute:
+                    tag_label = f"🟢  Heute – {wd}, {d.day}. {mo} {d.year}"
+                    hdr_bg    = "#2e7d32"
+                elif delta == -1:
+                    tag_label = f"🔵  Gestern – {wd}, {d.day}. {mo} {d.year}"
+                    hdr_bg    = "#1565a8"
+                elif delta == 1:
+                    tag_label = f"📅  Morgen – {wd}, {d.day}. {mo} {d.year}"
+                    hdr_bg    = "#4a6fa5"
+                elif delta > 1:
+                    tag_label = f"📅  In {delta} Tagen – {wd}, {d.day}. {mo} {d.year}"
+                    hdr_bg    = "#4a6fa5"
+                else:
+                    tag_label = f"📍  {wd}, {d.day}. {mo} {d.year}"
                     hdr_bg    = "#546e7a"
-                    d         = None
+            except ValueError:
+                tag_label = f"📍  {datum_str}"
+                hdr_bg    = "#546e7a"
+                d         = None
 
-                hdr = QLabel(tag_label)
-                hdr.setStyleSheet(
-                    f"background: {hdr_bg}; color: white; font-size: 11px; font-weight: bold; "
-                    "padding: 3px 8px; border-radius: 3px; margin-top: 4px;"
+            hdr = QLabel(tag_label)
+            hdr.setStyleSheet(
+                f"background: {hdr_bg}; color: white; font-size: 11px; font-weight: bold; "
+                "padding: 3px 8px; border-radius: 3px; margin-top: 4px;"
+            )
+            self._notiz_vlayout.addWidget(hdr)
+
+            for n in gruppe:
+                nid    = n["id"]
+                titel  = n["titel"]
+                text   = n["text"]
+                status = n["status"]
+
+                if status == "erledigt":
+                    border_color = "#9e9e9e"
+                    bg_color     = "#f5f5f5"
+                    txt_color    = "#9e9e9e"
+                elif status == "gelesen":
+                    border_color = "#1976d2"
+                    bg_color     = "#e3f2fd"
+                    txt_color    = "#1565c0"
+                else:
+                    border_color = "#2e7d32"
+                    bg_color     = "#e8f5e9"
+                    txt_color    = "#1b5e20"
+
+                card = QFrame()
+                card.setStyleSheet(
+                    f"QFrame {{ background: {bg_color}; border-left: 3px solid {border_color}; "
+                    f"border-radius: 4px; margin-left: 8px; }}"
                 )
-                self._notiz_vlayout.addWidget(hdr)
+                card_v = QVBoxLayout(card)
+                card_v.setContentsMargins(8, 5, 8, 5)
+                card_v.setSpacing(2)
 
-                for n in gruppe:
-                    nid    = n["id"]
-                    titel  = n["titel"]
-                    text   = n["text"]
-                    status = n["status"]
+                status_icon = {"offen": "🟢", "gelesen": "🔵", "erledigt": "✅"}.get(status, "📝")
+                titel_lbl = QLabel(f"{status_icon}  <b>{titel}</b>")
+                titel_lbl.setStyleSheet(f"color: {txt_color}; font-size: 12px; border: none;")
+                card_v.addWidget(titel_lbl)
 
-                    if status == "erledigt":
-                        border_color = "#9e9e9e"
-                        bg_color     = "#f5f5f5"
-                        txt_color    = "#9e9e9e"
-                    elif status == "gelesen":
-                        border_color = "#1976d2"
-                        bg_color     = "#e3f2fd"
-                        txt_color    = "#1565c0"
-                    else:
-                        border_color = "#2e7d32"
-                        bg_color     = "#e8f5e9"
-                        txt_color    = "#1b5e20"
+                if text:
+                    txt_lbl = QLabel(text)
+                    txt_lbl.setWordWrap(True)
+                    txt_lbl.setStyleSheet(f"color: {txt_color}; font-size: 11px; border: none;")
+                    card_v.addWidget(txt_lbl)
 
-                    card = QFrame()
-                    card.setStyleSheet(
-                        f"QFrame {{ background: {bg_color}; border-left: 3px solid {border_color}; "
-                        f"border-radius: 4px; margin-left: 8px; }}"
-                    )
-                    card_v = QVBoxLayout(card)
-                    card_v.setContentsMargins(8, 5, 8, 5)
-                    card_v.setSpacing(2)
+                btn_row = QHBoxLayout()
+                btn_row.setContentsMargins(0, 3, 0, 0)
+                btn_row.setSpacing(6)
 
-                    status_icon = {"offen": "🟢", "gelesen": "🔵", "erledigt": "✅"}.get(status, "📝")
-                    titel_lbl = QLabel(f"{status_icon}  <b>{titel}</b>")
-                    titel_lbl.setStyleSheet(f"color: {txt_color}; font-size: 12px; border: none;")
-                    card_v.addWidget(titel_lbl)
-
-                    if text:
-                        txt_lbl = QLabel(text)
-                        txt_lbl.setWordWrap(True)
-                        txt_lbl.setStyleSheet(f"color: {txt_color}; font-size: 11px; border: none;")
-                        card_v.addWidget(txt_lbl)
-
-                    btn_row = QHBoxLayout()
-                    btn_row.setContentsMargins(0, 3, 0, 0)
-                    btn_row.setSpacing(6)
-
-                    if status == "offen":
-                        btn_gelesen = _QPB4("👁  Gelesen")
-                        btn_gelesen.setFixedHeight(20)
-                        btn_gelesen.setStyleSheet(_BTN_MINI.format(
-                            bg="#bbdefb", fg="#0d47a1", bd="#90caf9", hv="#90caf9"
-                        ))
-                        btn_gelesen.clicked.connect(lambda _, _nid=nid: self._notiz_als_gelesen(_nid))
-                        btn_row.addWidget(btn_gelesen)
-
-                    if status != "erledigt":
-                        btn_erledigt = _QPB4("✅  Erledigt")
-                        btn_erledigt.setFixedHeight(20)
-                        btn_erledigt.setStyleSheet(_BTN_MINI.format(
-                            bg="#c8e6c9", fg="#1b5e20", bd="#a5d6a7", hv="#a5d6a7"
-                        ))
-                        btn_erledigt.clicked.connect(lambda _, _nid=nid: self._notiz_als_erledigt(_nid))
-                        btn_row.addWidget(btn_erledigt)
-
-                    btn_del = _QPB4("🗑")
-                    btn_del.setFixedHeight(20)
-                    btn_del.setFixedWidth(28)
-                    btn_del.setToolTip("Notiz löschen")
-                    btn_del.setStyleSheet(_BTN_MINI.format(
-                        bg="#fce8e8", fg="#b71c1c", bd="#ef9a9a", hv="#ef9a9a"
+                if status == "offen":
+                    btn_gelesen = _QPB4("👁  Gelesen")
+                    btn_gelesen.setFixedHeight(20)
+                    btn_gelesen.setStyleSheet(_BTN_MINI.format(
+                        bg="#bbdefb", fg="#0d47a1", bd="#90caf9", hv="#90caf9"
                     ))
-                    btn_del.clicked.connect(lambda _, _nid=nid: self._notiz_loeschen(_nid))
-                    btn_row.addWidget(btn_del)
-                    btn_row.addStretch()
-                    card_v.addLayout(btn_row)
+                    btn_gelesen.clicked.connect(lambda _, _nid=nid: self._notiz_als_gelesen(_nid))
+                    btn_row.addWidget(btn_gelesen)
 
-                    self._notiz_vlayout.addWidget(card)
-
-        # ── Zukünftige Notizen (nächste 10 Tage) ──────────────────────────────
-        try:
-            from functions.notizen_db import lade_zukunft
-            notizen_zukunft = lade_zukunft()
-        except Exception:
-            notizen_zukunft = []
-
-        # Trennlinie zwischen Vergangenheit und Zukunft
-        trenn = QFrame()
-        trenn.setFrameShape(QFrame.Shape.HLine)
-        trenn.setStyleSheet("color: #607d8b; margin: 6px 0;")
-        self._notiz_vlayout.addWidget(trenn)
-
-        zukunft_titel = QLabel("📅  Bevorstehende Notizen (nächste 10 Tage)")
-        zukunft_titel.setStyleSheet(
-            "color: #37474f; font-size: 11px; font-weight: bold; padding: 2px 0 4px 0;"
-        )
-        self._notiz_vlayout.addWidget(zukunft_titel)
-
-        if not notizen_zukunft:
-            leer_z = QLabel("Keine bevorstehenden Notizen (nächste 10 Tage)")
-            leer_z.setStyleSheet("color: #aaa; font-size: 11px; font-style: italic; padding: 4px 2px;")
-            self._notiz_vlayout.addWidget(leer_z)
-        else:
-            gruppen_z: dict[str, list] = {}
-            for n in notizen_zukunft:
-                gruppen_z.setdefault(n["datum"], []).append(n)
-
-            for datum_str, gruppe in gruppen_z.items():
-                try:
-                    d = _dtt.strptime(datum_str, "%d.%m.%Y").date()
-                    wd = _WOCHENTAGE[d.weekday()]
-                    mo = _MONATE_K[d.month]
-                    delta = (d - heute).days
-                    if delta == 1:
-                        tag_label = f"📅  Morgen – {wd}, {d.day}. {mo} {d.year}"
-                    else:
-                        tag_label = f"📅  In {delta} Tagen – {wd}, {d.day}. {mo} {d.year}"
-                    hdr_bg = "#4a6fa5"
-                except ValueError:
-                    tag_label = f"📅  {datum_str}"
-                    hdr_bg = "#4a6fa5"
-                    d = None
-
-                hdr = QLabel(tag_label)
-                hdr.setStyleSheet(
-                    f"background: {hdr_bg}; color: white; font-size: 11px; font-weight: bold; "
-                    "padding: 3px 8px; border-radius: 3px; margin-top: 4px;"
-                )
-                self._notiz_vlayout.addWidget(hdr)
-
-                for n in gruppe:
-                    nid    = n["id"]
-                    titel  = n["titel"]
-                    text   = n["text"]
-                    status = n["status"]
-
-                    border_color = "#1565a8"
-                    bg_color     = "#e8eaf6"
-                    txt_color    = "#1a237e"
-
-                    card = QFrame()
-                    card.setStyleSheet(
-                        f"QFrame {{ background: {bg_color}; border-left: 3px solid {border_color}; "
-                        f"border-radius: 4px; margin-left: 8px; }}"
-                    )
-                    card_v = QVBoxLayout(card)
-                    card_v.setContentsMargins(8, 5, 8, 5)
-                    card_v.setSpacing(2)
-
-                    status_icon = {"offen": "🟢", "gelesen": "🔵", "erledigt": "✅"}.get(status, "📝")
-                    titel_lbl = QLabel(f"{status_icon}  <b>{titel}</b>")
-                    titel_lbl.setStyleSheet(f"color: {txt_color}; font-size: 12px; border: none;")
-                    card_v.addWidget(titel_lbl)
-
-                    if text:
-                        txt_lbl = QLabel(text)
-                        txt_lbl.setWordWrap(True)
-                        txt_lbl.setStyleSheet(f"color: {txt_color}; font-size: 11px; border: none;")
-                        card_v.addWidget(txt_lbl)
-
-                    btn_row = QHBoxLayout()
-                    btn_row.setContentsMargins(0, 3, 0, 0)
-                    btn_row.setSpacing(6)
-
-                    btn_del = _QPB4("🗑")
-                    btn_del.setFixedHeight(20)
-                    btn_del.setFixedWidth(28)
-                    btn_del.setToolTip("Notiz löschen")
-                    btn_del.setStyleSheet(_BTN_MINI.format(
-                        bg="#fce8e8", fg="#b71c1c", bd="#ef9a9a", hv="#ef9a9a"
+                if status != "erledigt":
+                    btn_erledigt = _QPB4("✅  Erledigt")
+                    btn_erledigt.setFixedHeight(20)
+                    btn_erledigt.setStyleSheet(_BTN_MINI.format(
+                        bg="#c8e6c9", fg="#1b5e20", bd="#a5d6a7", hv="#a5d6a7"
                     ))
-                    btn_del.clicked.connect(lambda _, _nid=nid: self._notiz_loeschen(_nid))
-                    btn_row.addWidget(btn_del)
-                    btn_row.addStretch()
+                    btn_erledigt.clicked.connect(lambda _, _nid=nid: self._notiz_als_erledigt(_nid))
+                    btn_row.addWidget(btn_erledigt)
 
-                    card_v.addLayout(btn_row)
-                    self._notiz_vlayout.addWidget(card)
+                btn_del = _QPB4("🗑")
+                btn_del.setFixedHeight(20)
+                btn_del.setFixedWidth(28)
+                btn_del.setToolTip("Notiz löschen")
+                btn_del.setStyleSheet(_BTN_MINI.format(
+                    bg="#fce8e8", fg="#b71c1c", bd="#ef9a9a", hv="#ef9a9a"
+                ))
+                btn_del.clicked.connect(lambda _, _nid=nid: self._notiz_loeschen(_nid))
+                btn_row.addWidget(btn_del)
+                btn_row.addStretch()
+                card_v.addLayout(btn_row)
+
+                self._notiz_vlayout.addWidget(card)
 
     def _notiz_als_gelesen(self, nid: int):
         try:
