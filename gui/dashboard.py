@@ -1534,6 +1534,105 @@ class DashboardWidget(QWidget):
 
                 self._notiz_vlayout.addWidget(card)
 
+        # ── Zukünftige Notizen (nächste 10 Tage) ──────────────────────────────
+        try:
+            from functions.notizen_db import lade_zukunft
+            notizen_zukunft = lade_zukunft()
+        except Exception:
+            notizen_zukunft = []
+
+        # Trennlinie zwischen Vergangenheit und Zukunft
+        trenn = QFrame()
+        trenn.setFrameShape(QFrame.Shape.HLine)
+        trenn.setStyleSheet("color: #607d8b; margin: 6px 0;")
+        self._notiz_vlayout.addWidget(trenn)
+
+        zukunft_titel = QLabel("📅  Bevorstehende Notizen (nächste 10 Tage)")
+        zukunft_titel.setStyleSheet(
+            "color: #37474f; font-size: 11px; font-weight: bold; padding: 2px 0 4px 0;"
+        )
+        self._notiz_vlayout.addWidget(zukunft_titel)
+
+        if not notizen_zukunft:
+            leer_z = QLabel("Keine bevorstehenden Notizen (nächste 10 Tage)")
+            leer_z.setStyleSheet("color: #aaa; font-size: 11px; font-style: italic; padding: 4px 2px;")
+            self._notiz_vlayout.addWidget(leer_z)
+        else:
+            gruppen_z: dict[str, list] = {}
+            for n in notizen_zukunft:
+                gruppen_z.setdefault(n["datum"], []).append(n)
+
+            for datum_str, gruppe in gruppen_z.items():
+                try:
+                    d = _dtt.strptime(datum_str, "%d.%m.%Y").date()
+                    wd = _WOCHENTAGE[d.weekday()]
+                    mo = _MONATE_K[d.month]
+                    delta = (d - heute).days
+                    if delta == 1:
+                        tag_label = f"📅  Morgen – {wd}, {d.day}. {mo} {d.year}"
+                    else:
+                        tag_label = f"📅  In {delta} Tagen – {wd}, {d.day}. {mo} {d.year}"
+                    hdr_bg = "#4a6fa5"
+                except ValueError:
+                    tag_label = f"📅  {datum_str}"
+                    hdr_bg = "#4a6fa5"
+                    d = None
+
+                hdr = QLabel(tag_label)
+                hdr.setStyleSheet(
+                    f"background: {hdr_bg}; color: white; font-size: 11px; font-weight: bold; "
+                    "padding: 3px 8px; border-radius: 3px; margin-top: 4px;"
+                )
+                self._notiz_vlayout.addWidget(hdr)
+
+                for n in gruppe:
+                    nid    = n["id"]
+                    titel  = n["titel"]
+                    text   = n["text"]
+                    status = n["status"]
+
+                    border_color = "#1565a8"
+                    bg_color     = "#e8eaf6"
+                    txt_color    = "#1a237e"
+
+                    card = QFrame()
+                    card.setStyleSheet(
+                        f"QFrame {{ background: {bg_color}; border-left: 3px solid {border_color}; "
+                        f"border-radius: 4px; margin-left: 8px; }}"
+                    )
+                    card_v = QVBoxLayout(card)
+                    card_v.setContentsMargins(8, 5, 8, 5)
+                    card_v.setSpacing(2)
+
+                    status_icon = {"offen": "🟢", "gelesen": "🔵", "erledigt": "✅"}.get(status, "📝")
+                    titel_lbl = QLabel(f"{status_icon}  <b>{titel}</b>")
+                    titel_lbl.setStyleSheet(f"color: {txt_color}; font-size: 12px; border: none;")
+                    card_v.addWidget(titel_lbl)
+
+                    if text:
+                        txt_lbl = QLabel(text)
+                        txt_lbl.setWordWrap(True)
+                        txt_lbl.setStyleSheet(f"color: {txt_color}; font-size: 11px; border: none;")
+                        card_v.addWidget(txt_lbl)
+
+                    btn_row = QHBoxLayout()
+                    btn_row.setContentsMargins(0, 3, 0, 0)
+                    btn_row.setSpacing(6)
+
+                    btn_del = _QPB4("🗑")
+                    btn_del.setFixedHeight(20)
+                    btn_del.setFixedWidth(28)
+                    btn_del.setToolTip("Notiz löschen")
+                    btn_del.setStyleSheet(_BTN_MINI.format(
+                        bg="#fce8e8", fg="#b71c1c", bd="#ef9a9a", hv="#ef9a9a"
+                    ))
+                    btn_del.clicked.connect(lambda _, _nid=nid: self._notiz_loeschen(_nid))
+                    btn_row.addWidget(btn_del)
+                    btn_row.addStretch()
+
+                    card_v.addLayout(btn_row)
+                    self._notiz_vlayout.addWidget(card)
+
     def _notiz_als_gelesen(self, nid: int):
         try:
             from functions.notizen_db import als_gelesen

@@ -85,6 +85,32 @@ def lade_aktive() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def lade_zukunft() -> list[dict]:
+    """
+    Notizen der nächsten 10 Tage (ab morgen), anhand des Feldes `datum` (dd.MM.yyyy).
+    Gibt alle Status zurück, sortiert nach datum aufsteigend.
+    """
+    _init_db()
+    heute = datetime.today()
+    morgen = heute + timedelta(days=1)
+    in_10 = heute + timedelta(days=10)
+    # Alle Notizen laden und im Python filtern (datum ist kein ISO-Format)
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM notizen ORDER BY datum ASC, erstellt_am ASC"
+        ).fetchall()
+    ergebnis = []
+    for r in rows:
+        row = dict(r)
+        try:
+            d = datetime.strptime(row["datum"], "%d.%m.%Y")
+            if morgen.date() <= d.date() <= in_10.date():
+                ergebnis.append(row)
+        except ValueError:
+            pass
+    return ergebnis
+
+
 def lade_alle() -> list[dict]:
     """Alle Notizen, neueste zuerst."""
     _init_db()
