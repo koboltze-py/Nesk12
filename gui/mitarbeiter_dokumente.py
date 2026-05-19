@@ -1851,8 +1851,8 @@ class MitarbeiterDokumenteWidget(QWidget):
         from PySide6.QtGui import QColor
         _sep.setForeground(QColor("#bbb"))
         self._kat_list.addItem(_sep)
+        self._kat_list.addItem("🦺  PSA")
         self._kat_list.addItem("🖨️  Ausdrucke")
-        self._kat_list.addItem("🤒  Krankmeldungen")
         self._kat_list.setCurrentRow(0)
         self._kat_list.currentRowChanged.connect(self._kategorie_gewaehlt)
         layout.addWidget(self._kat_list, 1)
@@ -2082,9 +2082,9 @@ class MitarbeiterDokumenteWidget(QWidget):
         from gui.dokument_browser import DokumentBrowserWidget
         _ausdrucke_path = os.path.join(BASE_DIR, "Daten", "Vordrucke")
         self._ausdrucke_browser = DokumentBrowserWidget(
-            "🖨️  Ausdrucke – Vordrucke", _ausdrucke_path
+            "🦺  PSA – Vordrucke", _ausdrucke_path
         )
-        self._tabs.addTab(self._ausdrucke_browser, "🖨️  Ausdrucke")
+        self._tabs.addTab(self._ausdrucke_browser, "🦺  PSA")
         self._tabs.setTabVisible(5, False)
 
         # ── TAB 6: Krankmeldungen (DokumentBrowser) ──────────────────────────
@@ -2092,9 +2092,9 @@ class MitarbeiterDokumenteWidget(QWidget):
             os.path.dirname(os.path.dirname(BASE_DIR)), "03_Krankmeldungen"
         )
         self._krankmeldungen_browser = DokumentBrowserWidget(
-            "🤒  Krankmeldungen", _krankmeld_path, allow_subfolders=True
+            "🖨️  Ausdrucke", _krankmeld_path, allow_subfolders=True
         )
-        self._tabs.addTab(self._krankmeldungen_browser, "🤒  Krankmeldungen")
+        self._tabs.addTab(self._krankmeldungen_browser, "🖨️  Ausdrucke")
         self._tabs.setTabVisible(6, False)
 
         # ── TAB 7: Schulungen ─────────────────────────────────────────────────
@@ -3494,10 +3494,10 @@ class MitarbeiterDokumenteWidget(QWidget):
     def _kategorie_gewaehlt(self, row: int):
         if 0 <= row < len(KATEGORIEN):
             self._zeige_kategorie(KATEGORIEN[row])
-        elif row == len(KATEGORIEN) + 1:  # Ausdrucke (nach Trennlinie)
-            self._zeige_sonderkategorie(4, "🖨️  Ausdrucke")
-        elif row == len(KATEGORIEN) + 2:  # Krankmeldungen
-            self._zeige_sonderkategorie(5, "🤒  Krankmeldungen")
+        elif row == len(KATEGORIEN) + 1:  # PSA (nach Trennlinie)
+            self._zeige_sonderkategorie(4, "🦺  PSA")
+        elif row == len(KATEGORIEN) + 2:  # Ausdrucke
+            self._zeige_sonderkategorie(5, "🖨️  Ausdrucke")
 
     def _zeige_sonderkategorie(self, tab_index: int, titel: str):
         """Sonderkategorie: DokumentBrowser direkt im rechten Bereich zeigen."""
