@@ -741,6 +741,12 @@ class FahrzeugeWidget(QWidget):
         if not f:
             return
 
+        # Beacon-Timer stoppen, damit kein Zugriff auf gelöschte Widgets erfolgt
+        if self._fz_beacon_timer and self._fz_beacon_timer.isActive():
+            self._fz_beacon_timer.stop()
+        self._fz_beacon_timer = None
+        self._fz_beacon_frame_ref = None
+
         # Detail-Bereich neu bauen
         layout = self._detail_stack.layout()
         # Alten Inhalt entfernen
@@ -759,6 +765,21 @@ class FahrzeugeWidget(QWidget):
         fh.setStyleSheet(f"background:{meta['bg']};border-bottom:2px solid {meta['color']};")
         fhl = QHBoxLayout(fh)
         fhl.setContentsMargins(20, 8, 20, 8)
+
+        # Zurück-Button zur Übersicht
+        btn_back = QPushButton("←  Übersicht")
+        btn_back.setFixedHeight(34)
+        btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_back.setToolTip("Zurück zur Terminübersicht")
+        btn_back.setStyleSheet(
+            "QPushButton { background: rgba(255,255,255,0.18); color: white; "
+            "border: 1px solid rgba(255,255,255,0.45); border-radius: 4px; "
+            "font-size: 11px; padding: 2px 10px; } "
+            "QPushButton:hover { background: rgba(255,255,255,0.35); }"
+        )
+        btn_back.clicked.connect(self._zurueck_zur_uebersicht)
+        fhl.addWidget(btn_back)
+        fhl.addSpacing(8)
 
         title = QLabel(f.get("kennzeichen","–"))
         title.setFont(QFont("Arial", 18, QFont.Weight.Bold))
@@ -2082,6 +2103,12 @@ class FahrzeugeWidget(QWidget):
                 self, "Fehler beim Excel-Export",
                 f"Fehler:\n{e}\n\n{traceback.format_exc()}"
             )
+
+    def _zurueck_zur_uebersicht(self):
+        """Auswahl aufheben und zur Termin-Übersicht zurückkehren."""
+        self._aktives_fid = None
+        self._update_liste_selection()
+        self._zeige_placeholder_mit_terminen()
 
     # ── Refresh ────────────────────────────────────────────────────────────────
 
