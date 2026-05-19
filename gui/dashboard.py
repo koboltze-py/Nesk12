@@ -1086,6 +1086,47 @@ class DashboardWidget(QWidget):
             leer.setStyleSheet("color: #aaa; font-size: 11px; font-style: italic; padding: 4px 0;")
             self._vorfeld_kachel_layout.addWidget(leer)
 
+        # ── Bulmor-Status ────────────────────────────────────────────────────
+        try:
+            from functions.fahrzeug_functions import lade_alle_fahrzeuge, aktueller_status
+            alle = lade_alle_fahrzeuge()
+            nicht_bereit = []
+            for fz in alle:
+                kz = (fz.get("kennzeichen") or "").upper()
+                if "BULMOR" not in kz:
+                    continue
+                if not fz.get("aktiv", 1):
+                    continue
+                stat = aktueller_status(fz["id"])
+                status_key = (stat.get("status") or "fahrbereit") if stat else "fahrbereit"
+                if status_key != "fahrbereit":
+                    nicht_bereit.append((kz, status_key))
+
+            if nicht_bereit:
+                # Trennlinie
+                sep = QLabel()
+                sep.setFixedHeight(1)
+                sep.setStyleSheet("background: #e0e0e0; margin: 4px 0;")
+                self._vorfeld_kachel_layout.addWidget(sep)
+
+                from gui.fahrzeuge import STATUS_META
+                for kz, sk in nicht_bereit:
+                    meta = STATUS_META.get(sk, {})
+                    label_txt = meta.get("label", sk)
+                    farbe = meta.get("color", "#888")
+                    row_lbl = QLabel(
+                        f"<span style='color:#555;font-size:10px;'>{kz}:</span>"
+                        f"&nbsp;<span style='color:{farbe};font-weight:bold;font-size:10px;'>"
+                        f"{label_txt}</span>"
+                    )
+                    row_lbl.setStyleSheet(
+                        f"background: white; border-left: 3px solid {farbe};"
+                        "border-radius: 3px; padding: 2px 6px;"
+                    )
+                    self._vorfeld_kachel_layout.addWidget(row_lbl)
+        except Exception:
+            pass
+
     # ── Heutiger Dienstplan ─────────────────────────────────────────────────
 
     _MONATSORDNER = {
