@@ -508,6 +508,23 @@ class FahrzeugeWidget(QWidget):
         layout.addWidget(title)
         layout.addStretch()
 
+        # Zurück-Button – nur sichtbar wenn ein Fahrzeug ausgewählt ist
+        self._btn_zurueck = QPushButton("←  Übersicht")
+        self._btn_zurueck.setFont(QFont("Arial", 11))
+        self._btn_zurueck.setFixedHeight(40)
+        self._btn_zurueck.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_zurueck.setToolTip("Zurück zur Terminübersicht")
+        self._btn_zurueck.setStyleSheet(
+            "QPushButton { background: rgba(255,255,255,0.15); color: white; "
+            "border: 1px solid rgba(255,255,255,0.4); border-radius: 5px; "
+            "font-size: 11px; padding: 2px 14px; } "
+            "QPushButton:hover { background: rgba(255,255,255,0.30); }"
+        )
+        self._btn_zurueck.clicked.connect(self._zurueck_zur_uebersicht)
+        self._btn_zurueck.setVisible(False)
+        layout.addWidget(self._btn_zurueck)
+        layout.addSpacing(6)
+
         btn = QPushButton("＋  Fahrzeug anlegen")
         btn.setFont(QFont("Arial", 11))
         btn.setFixedHeight(40)
@@ -755,6 +772,9 @@ class FahrzeugeWidget(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
+        # Zurück-Button im Haupt-Header einblenden
+        self._btn_zurueck.setVisible(True)
+
         # Fahrzeug-Header
         status = aktueller_status(fid)
         stat_key = status["status"] if status else "fahrbereit"
@@ -765,21 +785,6 @@ class FahrzeugeWidget(QWidget):
         fh.setStyleSheet(f"background:{meta['bg']};border-bottom:2px solid {meta['color']};")
         fhl = QHBoxLayout(fh)
         fhl.setContentsMargins(20, 8, 20, 8)
-
-        # Zurück-Button zur Übersicht
-        btn_back = QPushButton("←  Übersicht")
-        btn_back.setFixedHeight(34)
-        btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_back.setToolTip("Zurück zur Terminübersicht")
-        btn_back.setStyleSheet(
-            "QPushButton { background: rgba(255,255,255,0.18); color: white; "
-            "border: 1px solid rgba(255,255,255,0.45); border-radius: 4px; "
-            "font-size: 11px; padding: 2px 10px; } "
-            "QPushButton:hover { background: rgba(255,255,255,0.35); }"
-        )
-        btn_back.clicked.connect(self._zurueck_zur_uebersicht)
-        fhl.addWidget(btn_back)
-        fhl.addSpacing(8)
 
         title = QLabel(f.get("kennzeichen","–"))
         title.setFont(QFont("Arial", 18, QFont.Weight.Bold))
@@ -2108,6 +2113,7 @@ class FahrzeugeWidget(QWidget):
         """Auswahl aufheben und zur Termin-Übersicht zurückkehren."""
         self._aktives_fid = None
         self._update_liste_selection()
+        self._btn_zurueck.setVisible(False)
         self._zeige_placeholder_mit_terminen()
 
     # ── Refresh ────────────────────────────────────────────────────────────────
