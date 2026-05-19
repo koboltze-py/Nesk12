@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QCheckBox, QSizePolicy, QInputDialog,
     QFileDialog
 )
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QTimer
 from PySide6.QtGui import QFont, QColor
 
 from config import FIORI_BLUE, FIORI_TEXT, FIORI_WHITE, FIORI_BORDER, FIORI_SUCCESS, FIORI_ERROR, FIORI_SIDEBAR_BG
@@ -441,6 +441,10 @@ class FahrzeugeWidget(QWidget):
         super().__init__(parent)
         self._aktives_fid: int | None = None
         self._liste_items: dict = {}  # fid → (frame, status, aktiv)
+        self._fz_beacon_dismissed: bool = False
+        self._fz_beacon_timer: QTimer | None = None
+        self._fz_beacon_frame_ref = None
+        self._fz_beacon_blink_state: bool = True
         self._build_ui()
         self.refresh()
 
@@ -2085,3 +2089,193 @@ class FahrzeugeWidget(QWidget):
         self._refresh_liste()
         if self._aktives_fid:
             self._zeige_fahrzeug(self._aktives_fid)
+        else:
+            self._zeige_placeholder_mit_terminen()
+
+    # ── Placeholder mit Fahrzeug-Terminübersicht ───────────────────────────
+
+    def _lade_alle_fahrzeug_termine(self) -> list[dict]:
+        """Lädt alle zukünftigen Fahrzeug-Termine (wie auf dem Dashboard)."""
+        try:
+            from database.connection import db_cursor
+            with db_cursor() as cur:
+                cur.execute("""
+                    SELECT ft.id, ft.datum, ft.uhrzeit, ft.typ, ft.titel,
+                           ft.beschreibung, f.kennzeichen, f.typ AS fzg_typ
+                    FROM fahrzeug_termine ft
+                    JOIN fahrzeuge f ON f.id = ft.fahrzeug_id
+                    WHERE ft.datum >= date('now') AND ft.erledigt = 0
+                    ORDER BY ft.datum, ft.uhrzeit
+                    LIMIT 30
+                """)
+                return cur.fetchall()
+        except Exception:
+            return []
+
+    def _fz_blink_beacon(self):
+        """Wechselt die Beacon-Hintergrundfarbe zum Blinken."""
+        if not self._fz_beacon_frame_ref:
+            return
+        self._fz_beacon_blink_state = not self._fz_beacon_blink_state
+        if self._fz_beacon_blink_state:
+            self._fz_beacon_frame_ref.setStyleSheet(
+                "QFrame#fz_beacon_frame { background: #C8102E; border-radius: 6px; }"
+            )
+        else:
+            self._fz_beacon_frame_ref.setStyleSheet(
+                "QFrame#fz_beacon_frame { background: #ff5a5a; border-radius: 6px; }"
+            )
+
+    def _fz_dismiss_beacon(self):
+        """Beacon bestätigen und Placeholder neu aufbauen."""
+        self._fz_beacon_dismissed = True
+        if self._fz_beacon_timer and self._fz_beacon_timer.isActive():
+            self._fz_beacon_timer.stop()
+        self._fz_beacon_timer = None
+        self._fz_beacon_frame_ref = None
+        self._zeige_placeholder_mit_terminen()
+
+    def _zeige_placeholder_mit_terminen(self):
+        """Zeigt im Detail-Bereich die bevorstehenden Fahrzeug-Termine (Dashboard-Logik)."""
+        # Bestehenden Beacon-Timer stoppen
+        if self._fz_beacon_timer and self._fz_beacon_timer.isActive():
+            self._fz_beacon_timer.stop()
+        self._fz_beacon_timer = None
+        self._fz_beacon_frame_ref = None
+
+        layout = self._detail_stack.layout()
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        today = date.today()
+        heute_str = today.isoformat()
+        morgen = date.fromordinal(today.toordinal() + 1)
+
+        termine = self._lade_alle_fahrzeug_termine()
+
+        # ── Haupt-Container ──────────────────────────────────────────────
+        outer = QWidget()
+        outer.setStyleSheet("background: #f4f6f8;")
+        outer_v = QVBoxLayout(outer)
+        outer_v.setContentsMargins(20, 20, 20, 20)
+        outer_v.setSpacing(10)
+
+        hint = QLabel("Fahrzeug in der Liste auswählen\noder neues Fahrzeug anlegen")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setFont(QFont("Arial", 12))
+        hint.setStyleSheet("color: #bbb; padding-bottom: 8px;")
+        outer_v.addWidget(hint)
+
+        # Trennlinie
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #dde; border: none; border-top: 1px solid #dde;")
+        outer_v.addWidget(sep)
+
+        hdr = QLabel("📌  Bevorstehende Fahrzeug-Termine")
+        hdr.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        hdr.setStyleSheet("color: #333; padding-top: 4px;")
+        outer_v.addWidget(hdr)
+
+        # ── Beacon für heutige Termine ──────────────────────────────────
+        heute_termine = [t for t in termine if t.get("datum", "") == heute_str]
+        if heute_termine and not self._fz_beacon_dismissed:
+            beacon_frame = QFrame()
+            beacon_frame.setObjectName("fz_beacon_frame")
+            beacon_frame.setStyleSheet(
+                "QFrame#fz_beacon_frame { background: #C8102E; border-radius: 6px; }"
+            )
+            b_layout = QHBoxLayout(beacon_frame)
+            b_layout.setContentsMargins(8, 6, 8, 6)
+            b_layout.setSpacing(6)
+
+            b_lbl = QLabel("🔔  HEUTE: Fahrzeugtermin(e) fällig!")
+            b_lbl.setStyleSheet(
+                "color: white; font-weight: bold; font-size: 12px; background: transparent;"
+            )
+            b_layout.addWidget(b_lbl, 1)
+
+            b_btn = QPushButton("✓ OK")
+            b_btn.setFixedHeight(24)
+            b_btn.setToolTip("Beacon schließen")
+            b_btn.setStyleSheet(
+                "QPushButton { background: rgba(255,255,255,0.25); color: white; "
+                "border: 1px solid rgba(255,255,255,0.55); border-radius: 4px; "
+                "font-size: 11px; padding: 1px 8px; } "
+                "QPushButton:hover { background: rgba(255,255,255,0.45); }"
+            )
+            b_btn.clicked.connect(self._fz_dismiss_beacon)
+            b_layout.addWidget(b_btn)
+
+            outer_v.addWidget(beacon_frame)
+            self._fz_beacon_frame_ref = beacon_frame
+
+            self._fz_beacon_blink_state = True
+            self._fz_beacon_timer = QTimer(self)
+            self._fz_beacon_timer.timeout.connect(self._fz_blink_beacon)
+            self._fz_beacon_timer.start(600)
+
+        # ── Scroll-Bereich für Termin-Liste ──────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("background: transparent;")
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        inner_v = QVBoxLayout(inner)
+        inner_v.setSpacing(5)
+        inner_v.setContentsMargins(0, 0, 0, 0)
+
+        if not termine:
+            leer = QLabel("✅  Keine bevorstehenden Fahrzeug-Termine")
+            leer.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
+            inner_v.addWidget(leer)
+        else:
+            for t in termine[:15]:
+                datum_str = t.get("datum", "")
+                if datum_str:
+                    parts = datum_str.split("-")
+                    if len(parts) == 3:
+                        d = QDate(int(parts[0]), int(parts[1]), int(parts[2]))
+                        datum_de = f"{d.day():02d}.{d.month():02d}.{d.year()}"
+                    else:
+                        datum_de = datum_str
+                else:
+                    datum_de = ""
+
+                kz = t.get("kennzeichen", "?")
+                titel = t.get("titel", "") or t.get("typ", "")
+                uhrzeit = t.get("uhrzeit", "") or ""
+
+                if datum_str == heute_str:
+                    farbe = "#C8102E"
+                    badge = " 🔴 HEUTE"
+                elif datum_str == morgen.isoformat():
+                    farbe = "#e53935"
+                    badge = " 🟠 Morgen"
+                else:
+                    farbe = "#1565a8"
+                    badge = ""
+
+                uhr_txt = f"  {uhrzeit}" if uhrzeit else ""
+                text = f"{datum_de}{uhr_txt}  [{kz}]  {titel}{badge}"
+
+                lbl = QLabel(text)
+                lbl.setWordWrap(True)
+                lbl.setStyleSheet(
+                    f"background: white; color: {farbe}; border-left: 3px solid {farbe};"
+                    "border-radius: 4px; padding: 5px 8px; font-size: 12px;"
+                )
+                inner_v.addWidget(lbl)
+
+            if len(termine) > 15:
+                mehr = QLabel(f"… und {len(termine) - 15} weitere Termine")
+                mehr.setStyleSheet("color: #888; font-size: 11px; padding: 2px 4px;")
+                inner_v.addWidget(mehr)
+
+        inner_v.addStretch()
+        scroll.setWidget(inner)
+        outer_v.addWidget(scroll, 1)
+        layout.addWidget(outer)

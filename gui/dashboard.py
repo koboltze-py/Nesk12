@@ -242,6 +242,10 @@ class DashboardWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._termine: list[dict] = []
+        self._beacon_dismissed: bool = False
+        self._beacon_timer: QTimer | None = None
+        self._beacon_frame_ref = None
+        self._beacon_blink_state: bool = True
         self._build_ui()
         # Uhr-Timer
         self._uhr_timer = QTimer(self)
@@ -873,6 +877,12 @@ class DashboardWidget(QWidget):
     # ── Termin-Liste aktualisieren ────────────────────────────────────────
 
     def _zeige_termine_liste(self):
+        # Bestehenden Beacon-Timer stoppen
+        if self._beacon_timer and self._beacon_timer.isActive():
+            self._beacon_timer.stop()
+        self._beacon_timer = None
+        self._beacon_frame_ref = None
+
         # Alte Einträge entfernen
         while self._termin_layout.count():
             item = self._termin_layout.takeAt(0)
@@ -881,12 +891,53 @@ class DashboardWidget(QWidget):
 
         today = QDate.currentDate()
         morgen = today.addDays(1)
+        heute_str = today.toString("yyyy-MM-dd")
 
         if not self._termine:
             leer = QLabel("✅  Keine bevorstehenden Fahrzeug-Termine")
             leer.setStyleSheet("color: #888; font-size: 11px; padding: 4px 0;")
             self._termin_layout.addWidget(leer)
             return
+
+        # ── Beacon für heutige Termine ──────────────────────────────────
+        heute_termine = [t for t in self._termine if t.get("datum", "") == heute_str]
+        if heute_termine and not self._beacon_dismissed:
+            from PySide6.QtWidgets import QPushButton as _QPBB
+            beacon_frame = QFrame()
+            beacon_frame.setObjectName("beacon_frame")
+            beacon_frame.setStyleSheet(
+                "QFrame#beacon_frame { background: #C8102E; border-radius: 6px; }"
+            )
+            beacon_layout = QHBoxLayout(beacon_frame)
+            beacon_layout.setContentsMargins(8, 6, 8, 6)
+            beacon_layout.setSpacing(6)
+
+            beacon_lbl = QLabel("🔔  HEUTE: Fahrzeugtermin(e) fällig!")
+            beacon_lbl.setStyleSheet(
+                "color: white; font-weight: bold; font-size: 12px; background: transparent;"
+            )
+            beacon_layout.addWidget(beacon_lbl, 1)
+
+            dismiss_btn = _QPBB("✓ OK")
+            dismiss_btn.setFixedHeight(24)
+            dismiss_btn.setToolTip("Beacon schließen")
+            dismiss_btn.setStyleSheet(
+                "QPushButton { background: rgba(255,255,255,0.25); color: white; "
+                "border: 1px solid rgba(255,255,255,0.55); border-radius: 4px; "
+                "font-size: 11px; padding: 1px 8px; } "
+                "QPushButton:hover { background: rgba(255,255,255,0.45); }"
+            )
+            dismiss_btn.clicked.connect(self._dismiss_beacon)
+            beacon_layout.addWidget(dismiss_btn)
+
+            self._termin_layout.addWidget(beacon_frame)
+            self._beacon_frame_ref = beacon_frame
+
+            # Blink-Timer starten
+            self._beacon_blink_state = True
+            self._beacon_timer = QTimer(self)
+            self._beacon_timer.timeout.connect(self._blink_beacon)
+            self._beacon_timer.start(600)
 
         for t in self._termine[:10]:
             datum_str = t.get("datum", "")
@@ -939,6 +990,29 @@ class DashboardWidget(QWidget):
             mehr = QLabel(f"… und {len(self._termine) - 10} weitere Termine")
             mehr.setStyleSheet("color: #888; font-size: 11px; padding: 2px 4px;")
             self._termin_layout.addWidget(mehr)
+
+    def _blink_beacon(self):
+        """Wechselt die Beacon-Hintergrundfarbe zum Blinken."""
+        if not self._beacon_frame_ref:
+            return
+        self._beacon_blink_state = not self._beacon_blink_state
+        if self._beacon_blink_state:
+            self._beacon_frame_ref.setStyleSheet(
+                "QFrame#beacon_frame { background: #C8102E; border-radius: 6px; }"
+            )
+        else:
+            self._beacon_frame_ref.setStyleSheet(
+                "QFrame#beacon_frame { background: #ff5a5a; border-radius: 6px; }"
+            )
+
+    def _dismiss_beacon(self):
+        """Beacon als bestätigt markieren und ausblenden."""
+        self._beacon_dismissed = True
+        if self._beacon_timer and self._beacon_timer.isActive():
+            self._beacon_timer.stop()
+        self._beacon_timer = None
+        self._beacon_frame_ref = None
+        self._zeige_termine_liste()
 
     # ── Vorfeld-Kachel ───────────────────────────────────────────────────
 
@@ -1406,7 +1480,7 @@ class DashboardWidget(QWidget):
     # ── Notizen ───────────────────────────────────────────────────────────────
 
     def _zeige_notizen(self):
-        """Notizen im Fenster -5 bis +10 Tage (nach Datum-Feld), nach Datum sortiert."""
+        """Notizen im Fenster -5 bis +10 Tage – letzter eingetragener Termin zuerst."""
         while self._notiz_vlayout.count():
             item = self._notiz_vlayout.takeAt(0)
             if item.widget():
@@ -1437,7 +1511,10 @@ class DashboardWidget(QWidget):
         )
         heute = _ddate.today()
 
-        # Nach Datum gruppieren (aufsteigend – schon sortiert aus DB)
+        # Zuletzt eingetragene Notiz kommt zuerst: nach erstellt_am absteigend sortieren
+        notizen = sorted(notizen, key=lambda x: x.get("erstellt_am", ""), reverse=True)
+
+        # Nach Datum gruppieren (Reihenfolge der Gruppen = zuletzt eingetragene zuerst)
         gruppen: dict[str, list] = {}
         for n in notizen:
             gruppen.setdefault(n["datum"], []).append(n)
