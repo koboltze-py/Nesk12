@@ -2168,6 +2168,11 @@ class FahrzeugeWidget(QWidget):
         self._fz_beacon_frame_ref = None
         self._zeige_placeholder_mit_terminen()
 
+    def _fz_reaktiviere_beacon(self):
+        """Beacon-Dismissed zurücksetzen und Beacon wieder einschalten."""
+        self._fz_beacon_dismissed = False
+        self._zeige_placeholder_mit_terminen()
+
     def _zeige_placeholder_mit_terminen(self):
         """Zeigt im Detail-Bereich die bevorstehenden Fahrzeug-Termine (Dashboard-Logik)."""
         # Bestehenden Beacon-Timer stoppen
@@ -2207,13 +2212,30 @@ class FahrzeugeWidget(QWidget):
         sep.setStyleSheet("color: #dde; border: none; border-top: 1px solid #dde;")
         outer_v.addWidget(sep)
 
+        # Header-Zeile mit Reaktivierungs-Button
+        hdr_row = QHBoxLayout()
+        hdr_row.setSpacing(6)
         hdr = QLabel("📌  Bevorstehende Fahrzeug-Termine")
         hdr.setFont(QFont("Arial", 11, QFont.Weight.Bold))
         hdr.setStyleSheet("color: #333; padding-top: 4px;")
-        outer_v.addWidget(hdr)
+        hdr_row.addWidget(hdr)
+        hdr_row.addStretch()
+        heute_termine_check = [t for t in termine if t.get("datum", "") == heute_str]
+        if heute_termine_check and self._fz_beacon_dismissed:
+            reaktiv_btn = QPushButton("🔔")
+            reaktiv_btn.setFixedSize(24, 24)
+            reaktiv_btn.setToolTip("Alarm wieder einschalten")
+            reaktiv_btn.setStyleSheet(
+                "QPushButton { background: #fce8e8; border: 1px solid #ef9a9a; "
+                "border-radius: 4px; font-size: 12px; } "
+                "QPushButton:hover { background: #ffcdd2; }"
+            )
+            reaktiv_btn.clicked.connect(self._fz_reaktiviere_beacon)
+            hdr_row.addWidget(reaktiv_btn)
+        outer_v.addLayout(hdr_row)
 
         # ── Beacon für heutige Termine ──────────────────────────────────
-        heute_termine = [t for t in termine if t.get("datum", "") == heute_str]
+        heute_termine = heute_termine_check
         if heute_termine and not self._fz_beacon_dismissed:
             beacon_frame = QFrame()
             beacon_frame.setObjectName("fz_beacon_frame")

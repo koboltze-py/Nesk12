@@ -342,10 +342,28 @@ class DashboardWidget(QWidget):
         # Linke Hälfte: Bevorstehende Fahrzeug-Termine
         termin_vbox = QVBoxLayout()
         termin_vbox.setSpacing(4)
+
+        # Header-Zeile mit Reaktivierungs-Button
+        from PySide6.QtWidgets import QPushButton as _QPBHDR, QHBoxLayout as _QHH
+        termin_hdr_row = _QHH()
+        termin_hdr_row.setSpacing(6)
         termin_hdr = QLabel("📌  Bevorstehende Fahrzeug-Termine")
         termin_hdr.setFont(QFont("Arial", 11, QFont.Weight.Bold))
         termin_hdr.setStyleSheet(f"color: {FIORI_TEXT};")
-        termin_vbox.addWidget(termin_hdr)
+        termin_hdr_row.addWidget(termin_hdr)
+        termin_hdr_row.addStretch()
+        self._beacon_reaktivieren_btn = _QPBHDR("🔔")
+        self._beacon_reaktivieren_btn.setFixedSize(24, 24)
+        self._beacon_reaktivieren_btn.setToolTip("Alarm wieder einschalten")
+        self._beacon_reaktivieren_btn.setStyleSheet(
+            "QPushButton { background: #fce8e8; border: 1px solid #ef9a9a; "
+            "border-radius: 4px; font-size: 12px; } "
+            "QPushButton:hover { background: #ffcdd2; }"
+        )
+        self._beacon_reaktivieren_btn.clicked.connect(self._reaktiviere_beacon)
+        self._beacon_reaktivieren_btn.setVisible(False)
+        termin_hdr_row.addWidget(self._beacon_reaktivieren_btn)
+        termin_vbox.addLayout(termin_hdr_row)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1012,6 +1030,16 @@ class DashboardWidget(QWidget):
             self._beacon_timer.stop()
         self._beacon_timer = None
         self._beacon_frame_ref = None
+        # Reaktivierungs-Button einblenden wenn heute Termine vorhanden
+        heute_str = QDate.currentDate().toString("yyyy-MM-dd")
+        if any(t.get("datum", "") == heute_str for t in self._termine):
+            self._beacon_reaktivieren_btn.setVisible(True)
+        self._zeige_termine_liste()
+
+    def _reaktiviere_beacon(self):
+        """Beacon-Dismissed zurücksetzen und Beacon wieder einschalten."""
+        self._beacon_dismissed = False
+        self._beacon_reaktivieren_btn.setVisible(False)
         self._zeige_termine_liste()
 
     # ── Vorfeld-Kachel ───────────────────────────────────────────────────
