@@ -478,8 +478,7 @@ class DashboardWidget(QWidget):
         self._notiz_scroll = QScrollArea()
         self._notiz_scroll.setWidgetResizable(True)
         self._notiz_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._notiz_scroll.setMinimumHeight(100)
-        self._notiz_scroll.setMaximumHeight(240)
+        self._notiz_scroll.setMinimumHeight(180)
         self._notiz_scroll.setStyleSheet("background: transparent;")
         self._notiz_container = QWidget()
         self._notiz_container.setStyleSheet("background: transparent;")
@@ -487,9 +486,7 @@ class DashboardWidget(QWidget):
         self._notiz_vlayout.setSpacing(5)
         self._notiz_vlayout.setContentsMargins(0, 0, 0, 0)
         self._notiz_scroll.setWidget(self._notiz_container)
-        linke.addWidget(self._notiz_scroll)
-
-        linke.addStretch()
+        linke.addWidget(self._notiz_scroll, stretch=1)
         outer.addLayout(linke, 6)
 
         # ── Rechte Seite: Uhr + Statistiken + DB-Status ───────────────────
@@ -1606,9 +1603,10 @@ class DashboardWidget(QWidget):
         """Dialog: alle Notizen aus der Datenbank anzeigen (Archiv)."""
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-            QPushButton, QScrollArea, QWidget, QFrame,
+            QPushButton, QScrollArea, QWidget, QFrame, QDateEdit,
         )
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QDate
+        from datetime import timedelta
 
         try:
             from functions.notizen_db import lade_alle, loeschen as _notiz_loeschen_db
@@ -1617,25 +1615,64 @@ class DashboardWidget(QWidget):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("🗄️  Notizen-Archiv")
-        dlg.setMinimumSize(560, 520)
+        dlg.setMinimumSize(640, 560)
         dlg.setStyleSheet("QDialog { background: #f5f5f5; }")
 
         outer = QVBoxLayout(dlg)
         outer.setContentsMargins(14, 12, 14, 12)
         outer.setSpacing(8)
 
-        # Suchzeile
-        such_row = QHBoxLayout()
+        _INPUT_STYLE = (
+            "border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; background: white;"
+        )
+
+        # ─ Suchzeile + Datumsfilter ──────────────────────────────────────
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+
         such_lbl = QLabel("🔍  Suche:")
-        such_lbl.setFixedWidth(60)
+        such_lbl.setFixedWidth(55)
         such_edit = QLineEdit()
         such_edit.setPlaceholderText("Titel oder Text filtern …")
-        such_edit.setStyleSheet(
-            "QLineEdit { border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; background: white; }"
+        such_edit.setStyleSheet(f"QLineEdit {{ {_INPUT_STYLE} }}")
+        filter_row.addWidget(such_lbl)
+        filter_row.addWidget(such_edit, 2)
+
+        filter_row.addSpacing(10)
+
+        von_lbl = QLabel("Von:")
+        von_lbl.setFixedWidth(30)
+        datum_von = QDateEdit()
+        datum_von.setCalendarPopup(True)
+        datum_von.setDisplayFormat("dd.MM.yyyy")
+        datum_von.setDate(QDate.currentDate().addDays(-7))   # Standard: letzte Woche
+        datum_von.setStyleSheet(f"QDateEdit {{ {_INPUT_STYLE} }}")
+        datum_von.setFixedWidth(110)
+        filter_row.addWidget(von_lbl)
+        filter_row.addWidget(datum_von)
+
+        bis_lbl = QLabel("Bis:")
+        bis_lbl.setFixedWidth(25)
+        datum_bis = QDateEdit()
+        datum_bis.setCalendarPopup(True)
+        datum_bis.setDisplayFormat("dd.MM.yyyy")
+        datum_bis.setDate(QDate.currentDate())
+        datum_bis.setStyleSheet(f"QDateEdit {{ {_INPUT_STYLE} }}")
+        datum_bis.setFixedWidth(110)
+        filter_row.addWidget(bis_lbl)
+        filter_row.addWidget(datum_bis)
+
+        btn_alle = QPushButton("Alle")
+        btn_alle.setFixedHeight(28)
+        btn_alle.setToolTip("Datumsfilter aufheben – alle Notizen zeigen")
+        btn_alle.setStyleSheet(
+            "QPushButton { padding: 2px 10px; background: #ecf0f1; border: 1px solid #bdc3c7; "
+            "border-radius: 4px; font-size: 11px; } "
+            "QPushButton:hover { background: #dfe6e9; }"
         )
-        such_row.addWidget(such_lbl)
-        such_row.addWidget(such_edit)
-        outer.addLayout(such_row)
+        filter_row.addWidget(btn_alle)
+
+        outer.addLayout(filter_row)
 
         # Scroll-Bereich
         scroll = QScrollArea()
@@ -1666,6 +1703,29 @@ class DashboardWidget(QWidget):
                     item.widget().deleteLater()
 
             alle = lade_alle()
+
+            # Datumsfilter
+            from datetime import datetime as _dtt, date as _date
+            d_von_q = datum_von.date()
+            d_bis_q = datum_bis.date()
+            d_von = _date(d_von_q.year(), d_von_q.month(), d_von_q.day())
+            d_bis = _date(d_bis_q.year(), d_bis_q.month(), d_bis_q.day())
+
+            def _parse_datum(s: str):
+                for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+                    try:
+                        return _dtt.strptime(s, fmt).date()
+                    except ValueError:
+                        pass
+                return None
+
+            gefiltert = []
+            for n in alle:
+                nd = _parse_datum(n.get("datum", ""))
+                if nd is None or (d_von <= nd <= d_bis):
+                    gefiltert.append(n)
+            alle = gefiltert
+
             if filter_text:
                 ft = filter_text.lower()
                 alle = [n for n in alle if ft in n["titel"].lower() or ft in n["text"].lower()]
@@ -1677,7 +1737,6 @@ class DashboardWidget(QWidget):
                 liste_layout.addStretch()
                 return
 
-            from datetime import datetime as _dtt
             for n in alle:
                 nid    = n["id"]
                 titel  = n["titel"]
@@ -1754,6 +1813,15 @@ class DashboardWidget(QWidget):
 
         _render()
         such_edit.textChanged.connect(lambda t: _render(t.strip()))
+        datum_von.dateChanged.connect(lambda _: _render(such_edit.text().strip()))
+        datum_bis.dateChanged.connect(lambda _: _render(such_edit.text().strip()))
+
+        def _alle_anzeigen():
+            datum_von.setDate(QDate(2000, 1, 1))
+            datum_bis.setDate(QDate.currentDate())
+            _render(such_edit.text().strip())
+
+        btn_alle.clicked.connect(_alle_anzeigen)
 
         # Schließen-Button
         btn_close = QPushButton("Schließen")
