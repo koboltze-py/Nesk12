@@ -9,12 +9,12 @@ import os
 import re
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QDateTime
+from PySide6.QtCore import Qt, QDateTime, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QTextEdit,
+    QScrollArea, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QTextEdit,
     QVBoxLayout, QWidget,
 )
 
@@ -355,6 +355,445 @@ ANTWORT_INFO_SERVICE = (
 ) + _SIG
 
 
+# ── Szenario 5: PRM-Ablehnung durch Airline ──────────────────────────────────
+
+def _build_prm_ablehnung(
+    kontakte: list[dict],
+    prm_passagiere: list[str],
+    flugnummer: str,
+    datum: str,
+    airline: str,
+) -> str:
+    """Erzeugt den vollständigen E-Mail-Text für eine PRM-Ablehnung."""
+
+    # Anrede-Zeile
+    if len(kontakte) == 1:
+        k = kontakte[0]
+        anr, vor = k["anrede"], k["vorname"]
+        if vor and anr == "Frau":
+            begruessung = f"Sehr geehrte Frau {vor},"
+        elif vor and anr == "Herr":
+            begruessung = f"Sehr geehrter Herr {vor},"
+        elif vor:
+            begruessung = f"Sehr geehrte/r {vor},"
+        else:
+            begruessung = "Sehr geehrte Damen und Herren,"
+    elif len(kontakte) > 1:
+        parts = []
+        for k in kontakte:
+            if k["vorname"] and k["anrede"] in ("Herr", "Frau"):
+                parts.append(f"{k['anrede']} {k['vorname']}")
+            elif k["vorname"]:
+                parts.append(k["vorname"])
+        if parts:
+            joined = (
+                f"{parts[0]} und {parts[1]}" if len(parts) == 2
+                else ", ".join(parts[:-1]) + f" und {parts[-1]}"
+            )
+            begruessung = f"Sehr geehrte {joined},"
+        else:
+            begruessung = "Sehr geehrte Damen und Herren,"
+    else:
+        begruessung = "Sehr geehrte Damen und Herren,"
+
+    # Flug-Referenz
+    if flugnummer and datum:
+        flug_ref = f"{flugnummer} am {datum}"
+    elif flugnummer:
+        flug_ref = flugnummer
+    elif datum:
+        flug_ref = f"der Flug am {datum}"
+    else:
+        flug_ref = "der genannte Flug"
+
+    # PRM-Passagier(e)
+    if not prm_passagiere:
+        schilderung_passagier = "für den Flug"
+    elif len(prm_passagiere) == 1:
+        schilderung_passagier = f"für den Flug von {prm_passagiere[0]}"
+    else:
+        joined_p = (
+            f"{prm_passagiere[0]} und {prm_passagiere[1]}" if len(prm_passagiere) == 2
+            else ", ".join(prm_passagiere[:-1]) + f" und {prm_passagiere[-1]}"
+        )
+        schilderung_passagier = f"für den Flug von {joined_p}"
+
+    airline_str = airline if airline else "der Fluggesellschaft"
+
+    schilderung = (
+        f"Sie schildern, dass {flug_ref} die Anzahl der PRM-Plätze begrenzt hat "
+        f"und das Kontingent {schilderung_passagier} bereits ausgeschöpft ist. "
+        "Die Festlegung der PRM-Kontingente sowie die Entscheidung, ob eine weitere "
+        "Anmeldung angenommen oder abgelehnt wird, liegt ausschließlich in der "
+        "Verantwortung der Fluggesellschaft. Auf diese Entscheidung haben weder "
+        "der Flughafen Köln/Bonn noch wir als Deutsches Rotes Kreuz Einfluss."
+    )
+
+    return (
+        f"{begruessung}\n\n"
+        "vielen Dank für Ihre Nachricht.\n\n"
+        "Grundsätzlich muss der PRM-Service über die jeweilige Fluggesellschaft angemeldet "
+        "werden. Die Airline nimmt die Anmeldung entgegen und übermittelt diese anschließend "
+        "an uns, das Deutsche Rote Kreuz. Wir führen den Service am Flughafen Köln/Bonn im "
+        "Auftrag des Flughafens durch.\n\n"
+        "Wir können den Service daher nur auf Grundlage einer entsprechenden Meldung durch die "
+        "Fluggesellschaft leisten. Eine eigene Buchung am System der Airline vorbei oder eine "
+        "Änderung der durch die Fluggesellschaft festgelegten Kontingente ist uns leider nicht "
+        "möglich.\n\n"
+        f"{schilderung}\n\n"
+        f"Bitte wenden Sie sich daher bezüglich einer möglichen Lösung oder Umbuchung direkt an "
+        f"{airline_str}. Sie haben in diesem Fall allerdings das Recht, kostenlos umzubuchen. "
+        "Die weitere Klärung und Umsetzung der Umbuchung muss direkt über die Fluggesellschaft "
+        "erfolgen.\n\n"
+        "Unabhängig davon können wir Ihnen, sofern verfügbar, einen Leihrollstuhl zur Verfügung "
+        "stellen. Mit diesem könnten Sie Ihre/n Angehörige/n selbstständig bis zum Gate "
+        "begleiten.\n\n"
+        "Bitte beachten Sie hierbei:\n\n"
+        "• Der Leihrollstuhl ersetzt nicht den von der Airline zu organisierenden PRM-Service.\n"
+        "• Wir können in diesem Fall keine Verantwortung für den Transport bis zum Flugzeug "
+        "oder für die Beförderung durch die Fluggesellschaft übernehmen.\n"
+        "• Die endgültige Entscheidung zur Mitnahme liegt weiterhin bei der jeweiligen "
+        "Fluggesellschaft.\n\n"
+        "Bitte melden Sie sich gerne bei uns, falls ein Leihrollstuhl für Sie infrage kommt.\n\n"
+        "Für weitere Fragen stehen wir Ihnen selbstverständlich gerne zur Verfügung."
+    ) + _SIG
+
+
+class _KontaktRow(QWidget):
+    """Zeile: Anrede-Combo + Vorname + E-Mail + Entfernen-Button."""
+
+    removed = Signal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 2, 0, 2)
+        lay.setSpacing(4)
+
+        self._anrede = QComboBox()
+        self._anrede.addItems(["–", "Herr", "Frau"])
+        self._anrede.setFixedWidth(68)
+        self._anrede.setStyleSheet(
+            "QComboBox{border:1px solid #c8d0d8;border-radius:3px;padding:2px 6px;font-size:11px;}"
+            "QComboBox:focus{border-color:#0070f3;}"
+        )
+
+        self._vorname = QLineEdit()
+        self._vorname.setPlaceholderText("Vorname")
+        self._vorname.setStyleSheet(
+            "QLineEdit{border:1px solid #c8d0d8;border-radius:3px;padding:2px 6px;font-size:11px;}"
+            "QLineEdit:focus{border-color:#0070f3;}"
+        )
+
+        self._email = QLineEdit()
+        self._email.setPlaceholderText("E-Mail-Adresse")
+        self._email.setStyleSheet(
+            "QLineEdit{border:1px solid #c8d0d8;border-radius:3px;padding:2px 6px;font-size:11px;}"
+            "QLineEdit:focus{border-color:#0070f3;}"
+        )
+
+        btn = QPushButton("✕")
+        btn.setFixedSize(26, 26)
+        btn.setStyleSheet(
+            "QPushButton{background:#e74c3c;color:white;border:none;border-radius:3px;font-size:11px;}"
+            "QPushButton:hover{background:#c0392b;}"
+        )
+        btn.clicked.connect(lambda: self.removed.emit(self))
+
+        lay.addWidget(self._anrede)
+        lay.addWidget(self._vorname, 1)
+        lay.addWidget(self._email, 2)
+        lay.addWidget(btn)
+
+    def data(self) -> dict:
+        return {
+            "anrede": self._anrede.currentText(),
+            "vorname": self._vorname.text().strip(),
+            "email": self._email.text().strip(),
+        }
+
+    def set_email(self, email: str):
+        self._email.setText(email)
+
+
+class _PassagierRow(QWidget):
+    """Zeile: Name + Entfernen-Button."""
+
+    removed = Signal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 2, 0, 2)
+        lay.setSpacing(4)
+
+        self._name = QLineEdit()
+        self._name.setPlaceholderText("Vollständiger Name")
+        self._name.setStyleSheet(
+            "QLineEdit{border:1px solid #c8d0d8;border-radius:3px;padding:2px 6px;font-size:11px;}"
+            "QLineEdit:focus{border-color:#0070f3;}"
+        )
+
+        btn = QPushButton("✕")
+        btn.setFixedSize(26, 26)
+        btn.setStyleSheet(
+            "QPushButton{background:#e74c3c;color:white;border:none;border-radius:3px;font-size:11px;}"
+            "QPushButton:hover{background:#c0392b;}"
+        )
+        btn.clicked.connect(lambda: self.removed.emit(self))
+
+        lay.addWidget(self._name, 1)
+        lay.addWidget(btn)
+
+    def data(self) -> str:
+        return self._name.text().strip()
+
+
+class Szenario5Dialog(QDialog):
+    """Eingabe-Dialog für Szenario 5 – Ablehnung PRM durch Airline."""
+
+    _CC_FIXED = "Flughafen2@drk-koeln.de; hildegard.eichler@koeln-bonn-airport.de"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("🚫  Szenario 5 – Ablehnung PRM durch Airline")
+        self.setMinimumWidth(700)
+        self.resize(720, 660)
+        self._kontakt_rows: list[_KontaktRow] = []
+        self._passagier_rows: list[_PassagierRow] = []
+
+        # Ergebniswerte
+        self.result_to = ""
+        self.result_cc = self._CC_FIXED
+        self.result_subject = ""
+        self.result_body = ""
+
+        self._setup_ui()
+        self._add_kontakt()
+        self._add_passagier()
+
+    # ── UI ──────────────────────────────────────────────────────────────────────
+
+    def _setup_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 12, 14, 12)
+        outer.setSpacing(10)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        inner = QWidget()
+        inner_lay = QVBoxLayout(inner)
+        inner_lay.setContentsMargins(0, 0, 4, 0)
+        inner_lay.setSpacing(10)
+        scroll.setWidget(inner)
+        outer.addWidget(scroll, stretch=1)
+
+        _GRP = (
+            "QGroupBox{border:1px solid #c8d0d8;border-radius:6px;margin-top:14px;"
+            "padding-top:6px;font-size:11px;font-weight:bold;color:#2c3e50;}"
+            "QGroupBox::title{subcontrol-origin:margin;subcontrol-position:top left;"
+            "left:10px;padding:0 6px;color:#1565a8;}"
+        )
+
+        # ── Kontaktpersonen ───────────────────────────────────────────────────
+        grp_k = QGroupBox("👤  Kontaktpersonen  (Empfänger der E-Mail)")
+        grp_k.setStyleSheet(_GRP)
+        k_lay = QVBoxLayout(grp_k)
+        k_lay.setSpacing(4)
+
+        hdr_k = QHBoxLayout()
+        for txt, stretch in [("Anrede", 0), ("Vorname", 1), ("E-Mail", 2)]:
+            lbl = QLabel(txt)
+            lbl.setStyleSheet("color:#555;font-size:10px;font-weight:bold;")
+            if stretch:
+                hdr_k.addWidget(lbl, stretch)
+            else:
+                lbl.setFixedWidth(72)
+                hdr_k.addWidget(lbl)
+        hdr_k.addSpacing(30)
+        k_lay.addLayout(hdr_k)
+
+        self._kontakt_container = QVBoxLayout()
+        self._kontakt_container.setSpacing(2)
+        k_lay.addLayout(self._kontakt_container)
+
+        btn_add_k = QPushButton("＋  Kontaktperson hinzufügen")
+        btn_add_k.setStyleSheet(
+            "QPushButton{background:#ecf0f1;border:1px dashed #aaa;border-radius:4px;"
+            "padding:4px 10px;font-size:11px;color:#555;}"
+            "QPushButton:hover{background:#dfe6e9;}"
+        )
+        btn_add_k.clicked.connect(self._add_kontakt)
+        k_lay.addWidget(btn_add_k)
+        inner_lay.addWidget(grp_k)
+
+        # ── PRM-Passagiere ────────────────────────────────────────────────────
+        grp_p = QGroupBox("♿  PRM-Passagiere  (vom Service abgelehnte Personen)")
+        grp_p.setStyleSheet(_GRP)
+        p_lay = QVBoxLayout(grp_p)
+        p_lay.setSpacing(4)
+
+        hdr_p = QHBoxLayout()
+        lbl_n = QLabel("Vollständiger Name")
+        lbl_n.setStyleSheet("color:#555;font-size:10px;font-weight:bold;")
+        hdr_p.addWidget(lbl_n, 1)
+        hdr_p.addSpacing(30)
+        p_lay.addLayout(hdr_p)
+
+        self._passagier_container = QVBoxLayout()
+        self._passagier_container.setSpacing(2)
+        p_lay.addLayout(self._passagier_container)
+
+        btn_add_p = QPushButton("＋  PRM-Passagier hinzufügen")
+        btn_add_p.setStyleSheet(
+            "QPushButton{background:#ecf0f1;border:1px dashed #aaa;border-radius:4px;"
+            "padding:4px 10px;font-size:11px;color:#555;}"
+            "QPushButton:hover{background:#dfe6e9;}"
+        )
+        btn_add_p.clicked.connect(self._add_passagier)
+        p_lay.addWidget(btn_add_p)
+        inner_lay.addWidget(grp_p)
+
+        # ── Flugdaten ─────────────────────────────────────────────────────────
+        grp_f = QGroupBox("✈️  Flugdaten & Airline")
+        grp_f.setStyleSheet(_GRP)
+        f_lay = QHBoxLayout(grp_f)
+        f_lay.setSpacing(10)
+
+        _LS = (
+            "QLineEdit{border:1px solid #c8d0d8;border-radius:3px;padding:3px 8px;"
+            "font-size:11px;} QLineEdit:focus{border-color:#0070f3;}"
+        )
+
+        f_lay.addWidget(QLabel("Flugnummer:"))
+        self._e_flug = QLineEdit()
+        self._e_flug.setPlaceholderText("z. B. PC 1608")
+        self._e_flug.setStyleSheet(_LS)
+        f_lay.addWidget(self._e_flug, 1)
+
+        f_lay.addWidget(QLabel("Datum:"))
+        self._e_datum = QLineEdit()
+        self._e_datum.setPlaceholderText("z. B. 04.06.2026")
+        self._e_datum.setStyleSheet(_LS)
+        f_lay.addWidget(self._e_datum, 1)
+
+        f_lay.addWidget(QLabel("Airline:"))
+        self._e_airline = QLineEdit()
+        self._e_airline.setPlaceholderText("z. B. Pegasus Airlines")
+        self._e_airline.setStyleSheet(_LS)
+        f_lay.addWidget(self._e_airline, 2)
+        inner_lay.addWidget(grp_f)
+
+        # ── E-Mail-Felder ─────────────────────────────────────────────────────
+        grp_e = QGroupBox("📧  E-Mail-Versand")
+        grp_e.setStyleSheet(_GRP)
+        e_lay = QVBoxLayout(grp_e)
+        e_lay.setSpacing(6)
+
+        row_to = QHBoxLayout()
+        lbl_to = QLabel("An:")
+        lbl_to.setFixedWidth(30)
+        lbl_to.setStyleSheet("font-weight:bold;font-size:11px;")
+        self._e_to = QLineEdit()
+        self._e_to.setPlaceholderText("Empfänger-E-Mail (aus Kontaktperson oder manuell)")
+        self._e_to.setStyleSheet(_LS)
+        row_to.addWidget(lbl_to)
+        row_to.addWidget(self._e_to)
+        e_lay.addLayout(row_to)
+
+        row_cc = QHBoxLayout()
+        lbl_cc = QLabel("CC:")
+        lbl_cc.setFixedWidth(30)
+        lbl_cc.setStyleSheet("font-weight:bold;font-size:11px;")
+        self._e_cc = QLineEdit(self._CC_FIXED)
+        self._e_cc.setStyleSheet(_LS)
+        row_cc.addWidget(lbl_cc)
+        row_cc.addWidget(self._e_cc)
+        e_lay.addLayout(row_cc)
+        inner_lay.addWidget(grp_e)
+
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText("📧  Entwurf übernehmen")
+        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("Abbrechen")
+        btns.accepted.connect(self._on_ok)
+        btns.rejected.connect(self.reject)
+        outer.addWidget(btns)
+
+    # ── Zeilen verwalten ────────────────────────────────────────────────────────
+
+    def _add_kontakt(self):
+        row = _KontaktRow(self)
+        row.removed.connect(self._remove_kontakt)
+        self._kontakt_rows.append(row)
+        self._kontakt_container.addWidget(row)
+
+    def _remove_kontakt(self, row: _KontaktRow):
+        if len(self._kontakt_rows) <= 1:
+            return  # mindestens eine Zeile behalten
+        self._kontakt_rows.remove(row)
+        self._kontakt_container.removeWidget(row)
+        row.deleteLater()
+        self._sync_to_from_kontakte()
+
+    def _add_passagier(self):
+        row = _PassagierRow(self)
+        row.removed.connect(self._remove_passagier)
+        self._passagier_rows.append(row)
+        self._passagier_container.addWidget(row)
+
+    def _remove_passagier(self, row: _PassagierRow):
+        if len(self._passagier_rows) <= 1:
+            return
+        self._passagier_rows.remove(row)
+        self._passagier_container.removeWidget(row)
+        row.deleteLater()
+
+    def _sync_to_from_kontakte(self):
+        """Füllt das An-Feld automatisch mit den E-Mails der Kontaktpersonen."""
+        emails = [r.data()["email"] for r in self._kontakt_rows if r.data()["email"]]
+        self._e_to.setText("; ".join(emails))
+
+    # ── Validierung & Ergebnis ──────────────────────────────────────────────────
+
+    def _on_ok(self):
+        kontakte = [r.data() for r in self._kontakt_rows]
+        passagiere = [r.data() for r in self._passagier_rows if r.data()]
+        flugnummer = self._e_flug.text().strip()
+        datum = self._e_datum.text().strip()
+        airline = self._e_airline.text().strip()
+
+        # An-Feld: falls leer, aus Kontaktpersonen befüllen
+        to = self._e_to.text().strip()
+        if not to:
+            emails = [k["email"] for k in kontakte if k["email"]]
+            to = "; ".join(emails)
+
+        if not to:
+            QMessageBox.warning(
+                self, "E-Mail fehlt",
+                "Bitte mindestens eine E-Mail-Adresse im Feld 'An:' oder bei einer Kontaktperson eintragen."
+            )
+            return
+
+        subject_parts = ["PRM – Ablehnung durch Airline"]
+        if passagiere:
+            subject_parts.append(passagiere[0])
+        if flugnummer:
+            subject_parts.append(f"Flug {flugnummer}")
+        if datum:
+            subject_parts.append(datum)
+
+        self.result_to = to
+        self.result_cc = self._e_cc.text().strip()
+        self.result_subject = " | ".join(subject_parts)
+        self.result_body = _build_prm_ablehnung(kontakte, passagiere, flugnummer, datum, airline)
+        self.accept()
+
+
 # ── Widget ─────────────────────────────────────────────────────────────────────
 
 class PassagieranfragenWidget(QWidget):
@@ -522,6 +961,26 @@ class PassagieranfragenWidget(QWidget):
             btn.clicked.connect(lambda _, t=text: self._set_antwort(t))
             sz_lay.addWidget(btn)
 
+        btn_s5 = QPushButton("🚫  Szenario 5 – Ablehnung PRM durch Airline")
+        btn_s5.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #7d3c98;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 7px 14px;
+                font-size: 11px;
+                font-weight: bold;
+                text-align: left;
+            }}
+            QPushButton:hover  {{ background-color: #6c3483; color: #ffffff; }}
+            QPushButton:pressed {{ background-color: #5b2c6f; }}
+        """)
+        btn_s5.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        btn_s5.setMinimumHeight(36)
+        btn_s5.clicked.connect(self._open_szenario5)
+        sz_lay.addWidget(btn_s5)
+
         # Checkbox: Flugdaten anfordern
         self._chk_flugdaten = QCheckBox("  + Flugdaten anfordern (Hinweis in Antwort einfügen)")
         self._chk_flugdaten.setStyleSheet(f"color: {FIORI_TEXT}; font-size: 11px;")
@@ -620,6 +1079,57 @@ class PassagieranfragenWidget(QWidget):
                 text += _FLUGDATEN_BITTE
 
         self._text_antwort.setPlainText(text)
+
+    def _open_szenario5(self):
+        """Öffnet den Szenario-5-Dialog und sendet den Entwurf direkt an Outlook."""
+        dlg = Szenario5Dialog(self)
+        # Vorausfüllen aus bereits extrahierten Feldern
+        if hasattr(self, '_f_email') and self._f_email.text().strip():
+            dlg._e_to.setText(self._f_email.text().strip())
+            # Synchron auch erste Kontaktzeile befüllen
+            if dlg._kontakt_rows:
+                row0 = dlg._kontakt_rows[0]
+                row0._email.setText(self._f_email.text().strip())
+                anrede = self._f_anrede.currentText()
+                if anrede in ("Herr", "Frau"):
+                    row0._anrede.setCurrentText(anrede)
+                name_parts = self._f_name.text().strip().split()
+                if name_parts:
+                    row0._vorname.setText(name_parts[0])
+        if hasattr(self, '_f_flugnummer'):
+            dlg._e_flug.setText(self._f_flugnummer.text().strip())
+        if hasattr(self, '_f_datum'):
+            dlg._e_datum.setText(self._f_datum.text().strip())
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        from functions.mail_functions import create_outlook_draft
+        import os
+        logo = _LOGO_PATH if os.path.isfile(_LOGO_PATH) else None
+        try:
+            create_outlook_draft(
+                to=dlg.result_to,
+                cc=dlg.result_cc,
+                subject=dlg.result_subject,
+                body_text=dlg.result_body,
+                logo_path=logo,
+            )
+            # Text auch in Antwort-Feld übernehmen
+            self._text_antwort.setPlainText(dlg.result_body)
+            self._f_email.setText(dlg.result_to.split(";")[0].strip())
+            QMessageBox.information(
+                self,
+                "Outlook",
+                "Outlook-Entwurf (Szenario 5) wurde geöffnet.\nBitte prüfen und absenden.",
+            )
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Outlook-Fehler",
+                f"Entwurf konnte nicht erstellt werden:\n{exc}\n\n"
+                "Bitte sicherstellen, dass Outlook geöffnet und pywin32 installiert ist.",
+            )
 
     def _open_outlook(self):
         """Erstellt Outlook-Entwurf via win32com mit DRK-Logo als Signatur."""
