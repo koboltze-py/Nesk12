@@ -176,6 +176,7 @@ from gui.handys_widget          import HandysWidget
 from gui.backup_widget          import BackupWidget
 from gui.passagiere             import PassagiereWidget
 from gui.vorkommnisse           import VorkommnisseWidget
+from gui.workflow               import WorkflowWidget
 
 
 NAV_ITEMS = [
@@ -194,6 +195,7 @@ NAV_ITEMS = [
     ("💾", "Backup",             12),
     ("⚙️",  "Einstellungen",    13),
     ("⚠️",  "Vorkommnisse",     14),
+    ("🔄",  "Workflow",          15),
 ]
 
 NAV_TOOLTIPS = [
@@ -212,6 +214,7 @@ NAV_TOOLTIPS = [
     "Datensicherung erstellen und wiederherstellen",
     "App-Einstellungen, Pfade und E-Mobby-Fahrerliste",
     "Vorkommnisse erfassen und verwalten",
+    "Stärkemeldungen mit Tagesdienstplänen abgleichen – Abweichungen und fehlende Einträge erkennen",
 ]
 
 
@@ -409,6 +412,7 @@ class MainWindow(QMainWindow):
         self._settings_page          = EinstellungenWidget()
         self._passagiere_page        = PassagiereWidget()
         self._vorkommnisse_page      = VorkommnisseWidget()
+        self._workflow_page          = WorkflowWidget()
         for page in [self._dashboard_page, self._mitarbeiter_page,
                      self._dienstliches_page,
                      self._aufgaben_haupt_page,
@@ -419,7 +423,8 @@ class MainWindow(QMainWindow):
                      self._telefonnummern_page,
                      self._handys_page,
                      self._backup_page, self._settings_page,
-                     self._vorkommnisse_page]:
+                     self._vorkommnisse_page,
+                     self._workflow_page]:
             self._stack.addWidget(page)
 
         layout.addWidget(self._stack)
