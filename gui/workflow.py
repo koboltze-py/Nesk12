@@ -15,13 +15,14 @@ from datetime import datetime
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QColor
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QFrame, QGroupBox,
+    QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QMenu, QMessageBox, QPushButton,
     QScrollArea, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QProgressBar,
+    QTextEdit, QVBoxLayout, QWidget, QProgressBar,
 )
 
 from config import BASE_DIR, FIORI_BLUE, FIORI_TEXT
+from database.workflow_db import lade_eintrag, speichere_eintrag, init_db
 
 # ── Standardpfade ──────────────────────────────────────────────────────────────
 _BASE_ONEDRIVE = Path(BASE_DIR).parent.parent  # …/!Gemeinsam.26/
@@ -246,11 +247,12 @@ class AbgleichErgebnis:
     """Enthält alle Unterschiede zwischen Stärkemeldung und Dienstplan."""
 
     def __init__(self, datei_staerke: str, datei_dienstplan: str,
-                 pfad_staerke: str = "", pfad_dienstplan: str = ""):
+                 pfad_staerke: str = "", pfad_dienstplan: str = "", datum: str = ""):
         self.datei_staerke    = datei_staerke
         self.datei_dienstplan = datei_dienstplan
-        self.pfad_staerke     = pfad_staerke     # voller Dateipfad zur .docx
-        self.pfad_dienstplan  = pfad_dienstplan  # voller Dateipfad zur .xlsx
+        self.pfad_staerke     = pfad_staerke
+        self.pfad_dienstplan  = pfad_dienstplan
+        self.datum            = datum        # YYYY-MM-DD des SM-Startdatums
         self.ok:         list[dict] = []   # identisch
         self.abweichung: list[dict] = []   # Unterschied im Dienst/Zeit
         self.nur_staerke: list[dict] = []  # in Stärke, nicht im Dienstplan
@@ -287,6 +289,7 @@ def _abgleichen(
         dienstplan_data.get("datei", ""),
         pfad_staerke=pfad_staerke,
         pfad_dienstplan=pfad_dienstplan,
+        datum=staerke_data.get("datum", ""),
     )
 
     # Index aufbauen: nachname (lower) → list[dict]
@@ -757,11 +760,12 @@ class WorkflowWidget(QWidget):
         erg_lay = QVBoxLayout(grp_erg)
 
         self._erg_table = QTableWidget()
-        self._erg_table.setColumnCount(6)
+        self._erg_table.setColumnCount(8)
         self._erg_table.setHorizontalHeaderLabels([
             "Stärkemeldung", "Dienstplan",
             "✅ Identisch", "⚠️ Abweichung",
             "📄 Nur Stärke", "📋 Nur Dienstplan",
+            "📝 Carmen", "💬 Notiz",
         ])
         self._erg_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._erg_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -769,6 +773,8 @@ class WorkflowWidget(QWidget):
             self._erg_table.horizontalHeader().setSectionResizeMode(
                 ci, QHeaderView.ResizeMode.ResizeToContents
             )
+        self._erg_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        self._erg_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         self._erg_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._erg_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._erg_table.setAlternatingRowColors(True)
@@ -779,7 +785,7 @@ class WorkflowWidget(QWidget):
         self._erg_table.customContextMenuRequested.connect(self._kontext_menu_erg)
         erg_lay.addWidget(self._erg_table)
 
-        hint_detail = QLabel("💡  Doppelklick für Details  |  Rechtsklick zum Öffnen der Dateien")
+        hint_detail = QLabel("💡  Doppelklick für Details  |  Rechtsklick für Menü (Dateien öffnen, Carmen, Notiz)")
         hint_detail.setStyleSheet("color: #888; font-size: 10px;")
         erg_lay.addWidget(hint_detail)
 
@@ -932,6 +938,9 @@ class WorkflowWidget(QWidget):
             hat_fehler = erg.hat_fehler
             bg = QColor("#fff3cd") if hat_fehler else QColor("#f0fff0")
 
+            # DB-Eintrag laden (Carmen + Notiz)
+            db_entry = lade_eintrag(erg.datum, erg.datei_staerke)
+
             vals = [
                 erg.datei_staerke,
                 erg.datei_dienstplan,
@@ -939,6 +948,8 @@ class WorkflowWidget(QWidget):
                 str(len(erg.abweichung)),
                 str(len(erg.nur_staerke)),
                 str(len(erg.nur_dienstplan)),
+                "✓ Carmen" if db_entry.get("abgeglichen_carmen") else "",
+                db_entry.get("notiz") or "",
             ]
             for ci, v in enumerate(vals):
                 item = QTableWidgetItem(v)
@@ -950,6 +961,14 @@ class WorkflowWidget(QWidget):
                     item.setForeground(QColor("#c0392b"))
                 if ci == 5 and erg.nur_dienstplan:
                     item.setForeground(QColor("#1a6ea8"))
+                if ci == 6 and db_entry.get("abgeglichen_carmen"):
+                    item.setForeground(QColor("#1e8449"))
+                    item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+                    ts = db_entry.get("abgeglichen_carmen_am") or ""
+                    if ts:
+                        item.setToolTip(f"Mit Carmen abgeglichen am {ts}")
+                if ci == 7 and v:
+                    item.setToolTip(v)
                 self._erg_table.setItem(ri, ci, item)
 
         if ergebnisse:
@@ -981,6 +1000,9 @@ class WorkflowWidget(QWidget):
         if ri < 0 or ri >= len(self._ergebnisse):
             return
         erg = self._ergebnisse[ri]
+        db_entry = lade_eintrag(erg.datum, erg.datei_staerke)
+        ist_carmen = bool(db_entry.get("abgeglichen_carmen"))
+
         menu = QMenu(self)
         a_detail = menu.addAction("🔍  Details anzeigen")
         menu.addSeparator()
@@ -988,12 +1010,17 @@ class WorkflowWidget(QWidget):
         a_sm.setEnabled(bool(erg.pfad_staerke and os.path.isfile(erg.pfad_staerke)))
         a_dp = menu.addAction("📋  Tagesdienstplan öffnen")
         a_dp.setEnabled(bool(erg.pfad_dienstplan and os.path.isfile(erg.pfad_dienstplan)))
-        menu.addSeparator()
         a_beide = menu.addAction("📂  Beide Dateien öffnen")
         a_beide.setEnabled(
             bool(erg.pfad_staerke and os.path.isfile(erg.pfad_staerke))
             and bool(erg.pfad_dienstplan and os.path.isfile(erg.pfad_dienstplan))
         )
+        menu.addSeparator()
+        a_carmen = menu.addAction(
+            "✖  Carmen-Abgleich aufheben" if ist_carmen else "✓  Mit Carmen abgeglichen markieren"
+        )
+        a_notiz = menu.addAction("💬  Notiz bearbeiten")
+
         action = menu.exec(self._erg_table.viewport().mapToGlobal(pos))
         if action == a_detail:
             dlg = _DetailDialog(erg, self)
@@ -1005,6 +1032,98 @@ class WorkflowWidget(QWidget):
         elif action == a_beide:
             _oeffne_datei(erg.pfad_staerke)
             _oeffne_datei(erg.pfad_dienstplan)
+        elif action == a_carmen:
+            speichere_eintrag(
+                datum=erg.datum,
+                sm_datei=erg.datei_staerke,
+                dp_datei=erg.datei_dienstplan,
+                abgeglichen_carmen=not ist_carmen,
+            )
+            self._aktualisiere_zeile(ri, erg)
+        elif action == a_notiz:
+            self._notiz_bearbeiten(ri, erg)
+
+    def _aktualisiere_zeile(self, ri: int, erg) -> None:
+        """Liest DB-Daten neu und aktualisiert Spalten 6+7 der angegebenen Zeile."""
+        db_entry = lade_eintrag(erg.datum, erg.datei_staerke)
+        ist_carmen = bool(db_entry.get("abgeglichen_carmen"))
+        notiz_text = db_entry.get("notiz") or ""
+
+        item6 = self._erg_table.item(ri, 6) or QTableWidgetItem()
+        item6.setText("✓ Carmen" if ist_carmen else "")
+        item6.setForeground(QColor("#1e8449") if ist_carmen else QColor("#000000"))
+        item6.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold if ist_carmen else QFont.Weight.Normal))
+        ts = db_entry.get("abgeglichen_carmen_am") or ""
+        item6.setToolTip(f"Mit Carmen abgeglichen am {ts}" if ts else "")
+        self._erg_table.setItem(ri, 6, item6)
+
+        item7 = self._erg_table.item(ri, 7) or QTableWidgetItem()
+        item7.setText(notiz_text)
+        item7.setToolTip(notiz_text)
+        self._erg_table.setItem(ri, 7, item7)
+
+    def _notiz_bearbeiten(self, ri: int, erg) -> None:
+        """Öffnet einen Dialog zum Bearbeiten der Notiz für diesen Tag."""
+        db_entry = lade_eintrag(erg.datum, erg.datei_staerke)
+        alte_notiz = db_entry.get("notiz") or ""
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"📝  Notiz – {erg.datei_staerke}")
+        dlg.resize(480, 260)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(14, 12, 14, 12)
+
+        lbl = QLabel(f"Notiz für <b>{erg.datei_staerke}</b>:")
+        lbl.setStyleSheet("font-size: 11px;")
+        lay.addWidget(lbl)
+
+        edit = QTextEdit()
+        edit.setPlainText(alte_notiz)
+        edit.setPlaceholderText("Hier Notiz eingeben …")
+        edit.setStyleSheet("font-size: 11px; border: 1px solid #c8d0d8; border-radius: 4px; padding: 4px;")
+        lay.addWidget(edit)
+
+        btn_row = QHBoxLayout()
+        btn_ok = QPushButton("💾  Speichern")
+        btn_ok.setMinimumHeight(34)
+        btn_ok.setStyleSheet(
+            f"QPushButton{{background:{FIORI_BLUE};color:white;border:none;border-radius:4px;"
+            f"padding:5px 14px;font-size:11px;font-weight:bold;}}"
+            f"QPushButton:hover{{background:#1a5276;}}"
+        )
+        btn_abbruch = QPushButton("Abbrechen")
+        btn_abbruch.setMinimumHeight(34)
+        btn_abbruch.setStyleSheet(
+            "QPushButton{background:#7f8c8d;color:white;border:none;border-radius:4px;"
+            "padding:5px 14px;font-size:11px;font-weight:bold;}"
+            "QPushButton:hover{background:#5d6d7e;}"
+        )
+        btn_loeschen = QPushButton("🗑  Notiz löschen")
+        btn_loeschen.setMinimumHeight(34)
+        btn_loeschen.setStyleSheet(
+            "QPushButton{background:#e74c3c;color:white;border:none;border-radius:4px;"
+            "padding:5px 14px;font-size:11px;font-weight:bold;}"
+            "QPushButton:hover{background:#c0392b;}"
+        )
+        btn_row.addWidget(btn_loeschen)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_abbruch)
+        btn_row.addWidget(btn_ok)
+        lay.addLayout(btn_row)
+
+        btn_abbruch.clicked.connect(dlg.reject)
+        btn_ok.clicked.connect(dlg.accept)
+        btn_loeschen.clicked.connect(lambda: (edit.setPlainText(""), dlg.accept()))
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            neue_notiz = edit.toPlainText().strip()
+            speichere_eintrag(
+                datum=erg.datum,
+                sm_datei=erg.datei_staerke,
+                dp_datei=erg.datei_dienstplan,
+                notiz=neue_notiz,
+            )
+            self._aktualisiere_zeile(ri, erg)
 
     def _reset(self):
         self._staerke_pfade = []
