@@ -367,9 +367,12 @@ def _abgleichen(
 
         if sp_liste and dp_liste:
             # Paare bilden (1:1 in Reihenfolge, bei Mehrfach-Nachnamen)
+            # Einträge MIT Vorname-Abkürzung zuerst: sie sind spezifischer und
+            # sollen nicht durch einen Fallback-Match verdrängt werden.
+            sp_liste_sorted = sorted(sp_liste, key=lambda x: (0 if x.get("abbrev") else 1))
             gematchte_dp: set[int] = set()
 
-            for sp in sp_liste:
+            for sp in sp_liste_sorted:
                 abbrev = (sp.get("abbrev") or "").lower()
 
                 # Besten DP-Match suchen: erst per Vorname-Abkürzung, dann first-unmatched
