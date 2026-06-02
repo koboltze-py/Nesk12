@@ -29,88 +29,106 @@ _DEFAULT_DIENSTPLAN = str(_BASE_ONEDRIVE / "04_Tagesdienstpläne")
 
 # ── Stärkemeldung-Parser (Word .docx) ─────────────────────────────────────────
 
+# Zeitraum-Regex: HH:MM-HH:MM, gefolgt von Tab oder mind. 2 Leerzeichen
+_SM_ZEIT_RE = re.compile(r'^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s*(?:\t|\s{2,})(.*)')
+
+# Abschnitt-Header in der Stärkemeldung (lowercase)
+_SM_ABSCHNITTE: dict[str, str] = {
+    "schichtleiter":      "SL",
+    "disposition":        "Dispo",
+    "behindertenbetreuer": "Betreuer",
+}
+
+
+def _datum_aus_dateiname(stem: str) -> str:
+    """Extrahiert Datum aus Dateinamen; normiert auf YYYY-MM-DD."""
+    # Format DD.MM.YYYY (z.B. "01.05.2026")
+    m = re.search(r'(\d{1,2})\.(\d{2})\.(\d{4})', stem)
+    if m:
+        return f"{m.group(3)}-{m.group(2)}-{int(m.group(1)):02d}"
+    # Format YYYY-MM-DD oder YYYY_MM_DD
+    m2 = re.search(r'(\d{4})[-_](\d{2})[-_](\d{2})', stem)
+    if m2:
+        return f"{m2.group(1)}-{m2.group(2)}-{m2.group(3)}"
+    return ""
+
+
 def _parse_staerkemeldung(docx_path: str) -> dict:
     """
-    Liest Name, Dienst, Beginn, Ende aus einer Stärkemeldungs-.docx.
-    Gibt zurück:
-      { 'datei': str, 'datum': str, 'personen': list[dict] }
-    Jede Person: { 'vollname': str, 'dienst': str, 'beginn': str, 'ende': str }
+    Liest Personen aus einer Stärkemeldungs-.docx im DRK-Standardformat.
+    Format: 1 äußere Tabelle, 2 Spalten; Daten als Absätze in der rechten Zelle.
+    Abschnitte: Schichtleiter / Disposition / Behindertenbetreuer
+    Zeilen: HH:MM-HH:MM<Tab>Nachname1 / Nachname2 ...
+
+    Rückgabe: { 'datei', 'datum', 'personen': list[dict] }
+    Person: { 'vollname', 'nachname', 'dienst' (SL|Dispo|Betreuer), 'beginn', 'ende' }
     """
     try:
         from docx import Document
     except ImportError:
-        return {"datei": docx_path, "datum": "", "personen": [], "fehler": "python-docx fehlt"}
+        return {"datei": Path(docx_path).name, "datum": "", "personen": [], "fehler": "python-docx fehlt"}
 
     try:
         doc = Document(docx_path)
     except Exception as e:
-        return {"datei": docx_path, "datum": "", "personen": [], "fehler": str(e)}
+        return {"datei": Path(docx_path).name, "datum": "", "personen": [], "fehler": str(e)}
 
+    datum_str = _datum_aus_dateiname(Path(docx_path).stem)
     personen: list[dict] = []
-    datum_str = ""
 
-    # Datum aus Dateiname extrahieren (z.B. Staerkemeldung_2026-06-01.docx)
-    m_datum = re.search(r'(\d{4}[-_]\d{2}[-_]\d{2})', Path(docx_path).stem)
-    if m_datum:
-        datum_str = m_datum.group(1).replace("_", "-")
+    # Rechte Zelle der äußeren Tabelle enthält alle Daten
+    if not doc.tables:
+        return {"datei": Path(docx_path).name, "datum": datum_str, "personen": personen}
 
-    # Alle Tabellen durchsuchen
-    for tbl in doc.tables:
-        # Kopfzeile finden (NAME, DIENST, BEGINN, ENDE)
-        header_row_idx = None
-        col_map: dict[str, int] = {}
-        for ri, row in enumerate(tbl.rows):
-            cells_text = [c.text.strip().upper() for c in row.cells]
-            has_name   = any("NAME" in t for t in cells_text)
-            has_dienst = any("DIENST" in t for t in cells_text)
-            if has_name and has_dienst:
-                header_row_idx = ri
-                for ci, ct in enumerate(cells_text):
-                    if "NAME" in ct:
-                        col_map["name"]   = ci
-                    elif "DIENST" in ct:
-                        col_map["dienst"] = ci
-                    elif "BEGINN" in ct or "START" in ct or "VON" in ct:
-                        col_map["beginn"] = ci
-                    elif "ENDE" in ct or "BIS" in ct:
-                        col_map["ende"]   = ci
-                break
+    right_cell = doc.tables[0].rows[0].cells[-1]
+    paragraphen = right_cell.paragraphs
 
-        if header_row_idx is None:
+    aktueller_abschnitt: str | None = None
+
+    for para in paragraphen:
+        text = para.text.strip()
+        if not text:
             continue
 
-        # Datenzeilen lesen
-        for row in tbl.rows[header_row_idx + 1:]:
-            cells = [c.text.strip() for c in row.cells]
-            if not cells:
+        # Abschnitt-Header?
+        text_lower = text.lower()
+        for key, val in _SM_ABSCHNITTE.items():
+            if text_lower.startswith(key):
+                aktueller_abschnitt = val
+                break
+        else:
+            # Kein Header-Match – Datenzeile?
+            if aktueller_abschnitt is None:
                 continue
-            name_idx   = col_map.get("name",   0)
-            dienst_idx = col_map.get("dienst", 1)
-            beginn_idx = col_map.get("beginn", 2)
-            ende_idx   = col_map.get("ende",   3)
-
-            name   = cells[name_idx]   if name_idx   < len(cells) else ""
-            dienst = cells[dienst_idx] if dienst_idx < len(cells) else ""
-            beginn = cells[beginn_idx] if beginn_idx < len(cells) else ""
-            ende   = cells[ende_idx]   if ende_idx   < len(cells) else ""
-
-            name = name.strip()
-            if not name or name.upper() in ("NAME", ""):
+            m = _SM_ZEIT_RE.match(text)
+            if not m:
                 continue
 
-            personen.append({
-                "vollname": name,
-                "dienst":   dienst.strip(),
-                "beginn":   beginn.strip(),
-                "ende":     ende.strip(),
-            })
+            beginn   = m.group(1).strip()
+            ende     = m.group(2).strip()
+            namen_raw = m.group(3).strip()
 
-    # Falls kein Datum aus Dateiname, aus Dokumenttext versuchen
+            # Mehrere Namen: " / " als Trennzeichen
+            namen = [n.strip() for n in namen_raw.split(" / ") if n.strip()]
+
+            for name_raw in namen:
+                # Nachname = erstes Token; Rest = Vorname-Abkürzung
+                tokens  = name_raw.split()
+                nachname = tokens[0].lower() if tokens else name_raw.lower()
+                personen.append({
+                    "vollname": name_raw,
+                    "nachname": nachname,
+                    "dienst":   aktueller_abschnitt,
+                    "beginn":   beginn,
+                    "ende":     ende,
+                })
+
+    # Fallback: Datum aus Dokumenttext
     if not datum_str:
         for para in doc.paragraphs:
-            m = re.search(r'(\d{1,2}[./]\d{1,2}[./]\d{4})', para.text)
+            m = re.search(r'(\d{1,2})\.(\d{2})\.(\d{4})', para.text)
             if m:
-                datum_str = m.group(1)
+                datum_str = f"{m.group(3)}-{m.group(2)}-{int(m.group(1)):02d}"
                 break
 
     return {
@@ -143,20 +161,20 @@ def _parse_dienstplan_fuer_abgleich(xlsx_path: str) -> dict:
 
     personen: list[dict] = []
     for p in result.get("betreuer", []) + result.get("dispo", []):
-        dienst = p.get("dienst_kuerzel") or p.get("dienst") or ""
+        # Korrekter Key aus DienstplanParser ist "dienst_kategorie" (z.B. T, N, DT, DN)
+        dienst   = p.get("dienst_kategorie") or ""
+        nachname = (p.get("nachname") or "").strip().lower()
         personen.append({
             "vollname": p.get("vollname", "").strip(),
+            "nachname": nachname,
             "dienst":   dienst.strip(),
             "beginn":   (p.get("start_zeit") or "").strip(),
             "ende":     (p.get("end_zeit")   or "").strip(),
             "ist_dispo": bool(p.get("ist_dispo")),
         })
 
-    # Datum aus Dateiname
-    datum_str = ""
-    m = re.search(r'(\d{4}[-_]\d{2}[-_]\d{2})', Path(xlsx_path).stem)
-    if m:
-        datum_str = m.group(1).replace("_", "-")
+    # Datum aus Dateiname (DD.MM.YYYY oder YYYY-MM-DD)
+    datum_str = _datum_aus_dateiname(Path(xlsx_path).stem)
 
     return {
         "datei":    Path(xlsx_path).name,
@@ -200,73 +218,127 @@ class AbgleichErgebnis:
         return bool(self.abweichung or self.nur_staerke or self.nur_dienstplan)
 
 
+def _sm_kat_zu_norm(sm_dienst: str) -> str:
+    """Normiert SM-Abschnitt auf 'Dispo' oder 'Betreuer' für den Vergleich."""
+    return "Dispo" if sm_dienst in ("SL", "Dispo") else "Betreuer"
+
+
+def _dp_kat_zu_norm(ist_dispo: bool) -> str:
+    return "Dispo" if ist_dispo else "Betreuer"
+
+
 def _abgleichen(
     staerke_data: dict,
     dienstplan_data: dict,
 ) -> AbgleichErgebnis:
+    """
+    Gleicht SM-Personen mit DP-Personen ab.
+    Matching erfolgt über den Nachnamen (SM hat nur Nachname).
+    Bei Namensgleichheit werden Zeiten und Kategorie (Dispo/Betreuer) verglichen.
+    """
     erg = AbgleichErgebnis(
         staerke_data.get("datei", ""),
         dienstplan_data.get("datei", ""),
     )
 
-    s_personen = {_normiere_name(p["vollname"]): p
-                  for p in staerke_data.get("personen", [])
-                  if p.get("vollname")}
-    d_personen = {_normiere_name(p["vollname"]): p
-                  for p in dienstplan_data.get("personen", [])
-                  if p.get("vollname")}
+    # Index aufbauen: nachname (lower) → list[dict]
+    s_by_nn: dict[str, list[dict]] = {}
+    for p in staerke_data.get("personen", []):
+        nn = p.get("nachname") or ""
+        if not nn and p.get("vollname"):
+            nn = p["vollname"].split()[0].lower()
+        if nn:
+            s_by_nn.setdefault(nn, []).append(p)
 
-    alle_namen = set(s_personen) | set(d_personen)
+    d_by_nn: dict[str, list[dict]] = {}
+    for p in dienstplan_data.get("personen", []):
+        nn = p.get("nachname") or ""
+        if not nn and p.get("vollname"):
+            parts = p["vollname"].split()
+            nn = parts[-1].lower() if parts else ""
+        if nn:
+            d_by_nn.setdefault(nn, []).append(p)
 
-    for name in sorted(alle_namen):
-        sp = s_personen.get(name)
-        dp = d_personen.get(name)
+    alle_nn = set(s_by_nn) | set(d_by_nn)
 
-        if sp and dp:
-            # Beide vorhanden → Felder vergleichen
-            s_dienst = _normiere_dienst(sp.get("dienst", ""))
-            d_dienst  = _normiere_dienst(dp.get("dienst", ""))
-            s_beginn  = _normiere_zeit(sp.get("beginn", ""))
-            d_beginn  = _normiere_zeit(dp.get("beginn", ""))
-            s_ende    = _normiere_zeit(sp.get("ende", ""))
-            d_ende    = _normiere_zeit(dp.get("ende", ""))
+    for nn in sorted(alle_nn):
+        sp_liste = s_by_nn.get(nn, [])
+        dp_liste = d_by_nn.get(nn, [])
 
-            unterschiede: list[str] = []
-            if s_dienst != d_dienst and s_dienst and d_dienst:
-                unterschiede.append(f"Dienst: SM={s_dienst} / DP={d_dienst}")
-            if s_beginn != d_beginn and s_beginn and d_beginn:
-                unterschiede.append(f"Beginn: SM={s_beginn} / DP={d_beginn}")
-            if s_ende != d_ende and s_ende and d_ende:
-                unterschiede.append(f"Ende: SM={s_ende} / DP={d_ende}")
+        if sp_liste and dp_liste:
+            # Paare bilden (1:1 in Reihenfolge, bei Mehrfach-Nachnamen)
+            gematchte_dp: set[int] = set()
 
-            eintrag = {
-                "name": sp["vollname"],
-                "sm_dienst": sp.get("dienst", ""),
-                "sm_beginn": sp.get("beginn", ""),
-                "sm_ende":   sp.get("ende", ""),
-                "dp_dienst": dp.get("dienst", ""),
-                "dp_beginn": dp.get("beginn", ""),
-                "dp_ende":   dp.get("ende", ""),
-                "unterschiede": unterschiede,
-            }
-            if unterschiede:
-                erg.abweichung.append(eintrag)
-            else:
-                erg.ok.append(eintrag)
-        elif sp:
-            erg.nur_staerke.append({
-                "name":      sp["vollname"],
-                "sm_dienst": sp.get("dienst", ""),
-                "sm_beginn": sp.get("beginn", ""),
-                "sm_ende":   sp.get("ende", ""),
-            })
+            for sp in sp_liste:
+                # Besten DP-Match suchen (noch nicht gematcht)
+                dp = next((d for d in dp_liste if id(d) not in gematchte_dp), None)
+                if dp is None:
+                    erg.nur_staerke.append({
+                        "name":      sp.get("vollname", nn),
+                        "sm_dienst": sp.get("dienst", ""),
+                        "sm_beginn": sp.get("beginn", ""),
+                        "sm_ende":   sp.get("ende",   ""),
+                    })
+                    continue
+                gematchte_dp.add(id(dp))
+
+                s_beginn = _normiere_zeit(sp.get("beginn", ""))
+                d_beginn = _normiere_zeit(dp.get("beginn", ""))
+                s_ende   = _normiere_zeit(sp.get("ende",   ""))
+                d_ende   = _normiere_zeit(dp.get("ende",   ""))
+
+                sm_kat = _sm_kat_zu_norm(sp.get("dienst", ""))
+                dp_kat = _dp_kat_zu_norm(dp.get("ist_dispo", False))
+
+                unterschiede: list[str] = []
+                if sm_kat != dp_kat:
+                    unterschiede.append(f"Kategorie: SM={sm_kat} / DP={dp_kat}")
+                if s_beginn != d_beginn and s_beginn and d_beginn:
+                    unterschiede.append(f"Beginn: SM={s_beginn} / DP={d_beginn}")
+                if s_ende != d_ende and s_ende and d_ende:
+                    unterschiede.append(f"Ende: SM={s_ende} / DP={d_ende}")
+
+                eintrag = {
+                    "name":      sp.get("vollname", nn),
+                    "sm_dienst": sp.get("dienst",  ""),
+                    "sm_beginn": sp.get("beginn",  ""),
+                    "sm_ende":   sp.get("ende",    ""),
+                    "dp_dienst": dp.get("dienst",  ""),
+                    "dp_beginn": dp.get("beginn",  ""),
+                    "dp_ende":   dp.get("ende",    ""),
+                    "unterschiede": unterschiede,
+                }
+                if unterschiede:
+                    erg.abweichung.append(eintrag)
+                else:
+                    erg.ok.append(eintrag)
+
+            # Übrige DP-Einträge ohne SM-Partner
+            for dp in dp_liste:
+                if id(dp) not in gematchte_dp:
+                    erg.nur_dienstplan.append({
+                        "name":      dp.get("vollname", nn),
+                        "dp_dienst": dp.get("dienst",  ""),
+                        "dp_beginn": dp.get("beginn",  ""),
+                        "dp_ende":   dp.get("ende",    ""),
+                    })
+
+        elif sp_liste:
+            for sp in sp_liste:
+                erg.nur_staerke.append({
+                    "name":      sp.get("vollname", nn),
+                    "sm_dienst": sp.get("dienst", ""),
+                    "sm_beginn": sp.get("beginn", ""),
+                    "sm_ende":   sp.get("ende",   ""),
+                })
         else:
-            erg.nur_dienstplan.append({
-                "name":      dp["vollname"],
-                "dp_dienst": dp.get("dienst", ""),
-                "dp_beginn": dp.get("beginn", ""),
-                "dp_ende":   dp.get("ende", ""),
-            })
+            for dp in dp_liste:
+                erg.nur_dienstplan.append({
+                    "name":      dp.get("vollname", nn),
+                    "dp_dienst": dp.get("dienst",  ""),
+                    "dp_beginn": dp.get("beginn",  ""),
+                    "dp_ende":   dp.get("ende",    ""),
+                })
 
     return erg
 
