@@ -601,8 +601,39 @@ class _DetailDialog(QDialog):
         for e in erg.ok:
             rows.append(("✅ Identisch", e, QColor("#f0fff0")))
 
-        tbl.setRowCount(len(rows))
-        for ri, (status, e, bg) in enumerate(rows):
+        def _ist_dispo_sl(eintrag: dict) -> bool:
+            """True wenn SM-Dienst SL oder Dispo ist."""
+            d = (eintrag.get("sm_dienst") or eintrag.get("dp_dienst") or "").upper()
+            return d in ("SL", "DISPO", "DT", "DN", "DT3", "DN3", "DN10", "DT10")
+
+        # Sortierung: Dispo/SL-Einträge zuerst, Betreuer dahinter
+        # Innerhalb beider Gruppen bleibt die bisherige Reihenfolge erhalten
+        rows_dispo = [(s, e, bg) for s, e, bg in rows if _ist_dispo_sl(e)]
+        rows_betr  = [(s, e, bg) for s, e, bg in rows if not _ist_dispo_sl(e)]
+
+        # Trennzeilen-Sentinel: (None, None, None)
+        combined: list = []
+        if rows_dispo:
+            combined += rows_dispo
+        if rows_dispo and rows_betr:
+            combined.append(None)   # Trennzeile
+        combined += rows_betr
+
+        tbl.setRowCount(len(combined))
+        for ri, row in enumerate(combined):
+            if row is None:
+                # Trennzeile: grauer Balken mit Label
+                sep = QTableWidgetItem("── Betreuer ──────────────────────────────────────────")
+                sep.setBackground(QColor("#d5d8dc"))
+                sep.setForeground(QColor("#5d6d7e"))
+                sep.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+                sep.setFlags(Qt.ItemFlag.NoItemFlags)
+                tbl.setItem(ri, 0, sep)
+                tbl.setSpan(ri, 0, 1, 9)
+                tbl.setRowHeight(ri, 18)
+                continue
+
+            status, e, bg = row
             vals = [
                 status,
                 e.get("name", ""),
@@ -623,6 +654,8 @@ class _DetailDialog(QDialog):
                     item.setForeground(QColor("#c0392b"))
                 elif ci == 0 and "Dienstplan" in status:
                     item.setForeground(QColor("#1a6ea8"))
+                if ci == 2 and _ist_dispo_sl(e):
+                    item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
                 if ci == 8 and v:
                     item.setForeground(QColor("#555"))
                     item.setToolTip(v)
