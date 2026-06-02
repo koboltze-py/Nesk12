@@ -112,9 +112,21 @@ def _parse_staerkemeldung(docx_path: str) -> dict:
             namen = [n.strip() for n in namen_raw.split(" / ") if n.strip()]
 
             for name_raw in namen:
-                # Nachname = erstes Token; Rest = Vorname-Abkürzung
-                tokens  = name_raw.split()
-                nachname = tokens[0].lower() if tokens else name_raw.lower()
+                # Nachname-Extraktion aus SM-Format:
+                # - "Groß"           → nachname="groß"
+                # - "Blei Pa"        → letztes Token ≤2 Zeichen = Vorname-Abk. → nachname="blei"
+                # - "Tepealan Le"    → nachname="tepealan"
+                # - "El Mojahid"     → letztes Token >2 Zeichen = Compound → nachname="el mojahid"
+                # - "Clausen-Hansen Be" → nachname="clausen-hansen"
+                tokens = name_raw.split()
+                if len(tokens) == 1:
+                    nachname = tokens[0].lower()
+                elif len(tokens[-1]) <= 2:
+                    # Letztes Token ist Vorname-Abkürzung
+                    nachname = " ".join(tokens[:-1]).lower()
+                else:
+                    # Compound-Nachname (z.B. "El Mojahid")
+                    nachname = name_raw.lower()
                 personen.append({
                     "vollname": name_raw,
                     "nachname": nachname,
@@ -252,12 +264,17 @@ def _abgleichen(
 
     d_by_nn: dict[str, list[dict]] = {}
     for p in dienstplan_data.get("personen", []):
-        nn = p.get("nachname") or ""
-        if not nn and p.get("vollname"):
-            parts = p["vollname"].split()
+        nn = (p.get("nachname") or "").lower().strip()
+        if not nn:
+            parts = p.get("vollname", "").split()
             nn = parts[-1].lower() if parts else ""
         if nn:
             d_by_nn.setdefault(nn, []).append(p)
+            # Compound-Nachname auch mit letztem Token indexieren
+            # "el mojahid" → auch "mojahid"; "el karfouh" → auch "karfouh"
+            last_token = nn.split()[-1]
+            if last_token != nn:
+                d_by_nn.setdefault(last_token, []).append(p)
 
     alle_nn = set(s_by_nn) | set(d_by_nn)
 
@@ -293,10 +310,14 @@ def _abgleichen(
                 unterschiede: list[str] = []
                 if sm_kat != dp_kat:
                     unterschiede.append(f"Kategorie: SM={sm_kat} / DP={dp_kat}")
-                if s_beginn != d_beginn and s_beginn and d_beginn:
-                    unterschiede.append(f"Beginn: SM={s_beginn} / DP={d_beginn}")
-                if s_ende != d_ende and s_ende and d_ende:
-                    unterschiede.append(f"Ende: SM={s_ende} / DP={d_ende}")
+
+                # Zeiten nur für Betreuer vergleichen –
+                # SL und Dispo werden in der SM auf volle Stunden gerundet (bekannt)
+                if sm_kat == "Betreuer":
+                    if s_beginn != d_beginn and s_beginn and d_beginn:
+                        unterschiede.append(f"Beginn: SM={s_beginn} / DP={d_beginn}")
+                    if s_ende != d_ende and s_ende and d_ende:
+                        unterschiede.append(f"Ende: SM={s_ende} / DP={d_ende}")
 
                 eintrag = {
                     "name":      sp.get("vollname", nn),
