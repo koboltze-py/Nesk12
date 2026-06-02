@@ -185,6 +185,10 @@ def _parse_dienstplan_fuer_abgleich(xlsx_path: str) -> dict:
         # R = Rufbereitschaft → wird nicht in der SM erfasst, daher beim Abgleich ignorieren
         if dienst.strip().upper() == "R":
             continue
+        # Lars Peters wird generell nicht verglichen
+        vollname_lower = (p.get("vollname") or "").strip().lower()
+        if vollname_lower == "lars peters":
+            continue
         nachname = (p.get("nachname") or "").strip().lower()
         personen.append({
             "vollname": p.get("vollname", "").strip(),
