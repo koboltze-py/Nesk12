@@ -551,7 +551,7 @@ class _DetailDialog(QDialog):
         super().__init__(parent)
         self._erg = erg
         self.setWindowTitle(f"🔍  Detail: {erg.datei_staerke} ↔ {erg.datei_dienstplan}")
-        self.resize(900, 600)
+        self.resize(1200, 620)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 10, 12, 10)
 
