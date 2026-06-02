@@ -606,10 +606,34 @@ class _DetailDialog(QDialog):
             d = (eintrag.get("sm_dienst") or eintrag.get("dp_dienst") or "").upper()
             return d in ("SL", "DISPO", "DT", "DN", "DT3", "DN3", "DN10", "DT10")
 
-        # Sortierung: Dispo/SL-Einträge zuerst, Betreuer dahinter
-        # Innerhalb beider Gruppen bleibt die bisherige Reihenfolge erhalten
-        rows_dispo = [(s, e, bg) for s, e, bg in rows if _ist_dispo_sl(e)]
-        rows_betr  = [(s, e, bg) for s, e, bg in rows if not _ist_dispo_sl(e)]
+        # Sortiergewichte Betreuer: T, T10, T8, N, N10, Rest
+        _BETR_ORDER = {"T": 0, "T10": 1, "T8": 2, "N": 3, "N10": 4}
+        # Sortiergewichte Dispo/SL: SL+DT3, SL+DN3, Dispo+DT, DN, Rest
+        def _dispo_key(e: dict) -> int:
+            sm = (e.get("sm_dienst") or "").upper()
+            dp = (e.get("dp_dienst") or "").upper()
+            if sm == "SL" and dp == "DT3":  return 0
+            if sm == "SL" and dp == "DN3":  return 1
+            if dp in ("DT3",):              return 0  # nur DP bekannt
+            if dp in ("DN3",):              return 1
+            if dp == "DT":                  return 2
+            if dp == "DN":                  return 3
+            if sm in ("SL",):               return 4
+            return 9
+
+        def _betr_key(e: dict) -> int:
+            dp = (e.get("dp_dienst") or e.get("sm_dienst") or "").upper()
+            return _BETR_ORDER.get(dp, 99)
+
+        # Sortierung: Dispo/SL zuerst (nach Gewicht), dann Betreuer (nach Gewicht)
+        rows_dispo = sorted(
+            [(s, e, bg) for s, e, bg in rows if _ist_dispo_sl(e)],
+            key=lambda r: _dispo_key(r[1])
+        )
+        rows_betr = sorted(
+            [(s, e, bg) for s, e, bg in rows if not _ist_dispo_sl(e)],
+            key=lambda r: _betr_key(r[1])
+        )
 
         # Trennzeilen-Sentinel: (None, None, None)
         combined: list = []
