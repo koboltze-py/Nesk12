@@ -197,6 +197,7 @@ def _parse_dienstplan_fuer_abgleich(xlsx_path: str) -> dict:
             "beginn":   (p.get("start_zeit") or "").strip(),
             "ende":     (p.get("end_zeit")   or "").strip(),
             "ist_dispo": bool(p.get("ist_dispo")),
+            "notiz":    (p.get("notiz") or "").strip(),
         })
 
     # Datum aus Dateiname (DD.MM.YYYY oder YYYY-MM-DD)
@@ -423,6 +424,7 @@ def _abgleichen(
                     "dp_dienst": dp.get("dienst",  ""),
                     "dp_beginn": dp.get("beginn",  ""),
                     "dp_ende":   dp.get("ende",    ""),
+                    "dp_notiz":  dp.get("notiz",   ""),
                     "unterschiede": unterschiede,
                 }
                 if unterschiede:
@@ -438,6 +440,7 @@ def _abgleichen(
                         "dp_dienst": dp.get("dienst",  ""),
                         "dp_beginn": dp.get("beginn",  ""),
                         "dp_ende":   dp.get("ende",    ""),
+                        "dp_notiz":  dp.get("notiz",   ""),
                     })
 
         elif sp_liste:
@@ -455,6 +458,7 @@ def _abgleichen(
                     "dp_dienst": dp.get("dienst",  ""),
                     "dp_beginn": dp.get("beginn",  ""),
                     "dp_ende":   dp.get("ende",    ""),
+                    "dp_notiz":  dp.get("notiz",   ""),
                 })
 
     return erg
@@ -562,13 +566,15 @@ class _DetailDialog(QDialog):
         lay.addWidget(stats)
 
         tbl = QTableWidget()
-        tbl.setColumnCount(8)
+        tbl.setColumnCount(9)
         tbl.setHorizontalHeaderLabels([
             "Status", "Name",
             "SM Dienst", "SM Beginn", "SM Ende",
             "DP Dienst", "DP Beginn", "DP Ende",
+            "📋 Notiz (DP)",
         ])
         tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        tbl.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
         tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         tbl.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -601,6 +607,7 @@ class _DetailDialog(QDialog):
                 e.get("dp_dienst", ""),
                 e.get("dp_beginn", ""),
                 e.get("dp_ende",   ""),
+                e.get("dp_notiz",  ""),
             ]
             for ci, v in enumerate(vals):
                 item = QTableWidgetItem(v)
@@ -611,6 +618,9 @@ class _DetailDialog(QDialog):
                     item.setForeground(QColor("#c0392b"))
                 elif ci == 0 and "Dienstplan" in status:
                     item.setForeground(QColor("#1a6ea8"))
+                if ci == 8 and v:
+                    item.setForeground(QColor("#555"))
+                    item.setToolTip(v)
                 tbl.setItem(ri, ci, item)
 
             # Unterschiede-Tooltip
@@ -790,6 +800,23 @@ class WorkflowWidget(QWidget):
         self._erg_table.doubleClicked.connect(self._detail_zeigen)
         self._erg_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._erg_table.customContextMenuRequested.connect(self._kontext_menu_erg)
+
+        # Warn-Banner für fehlende/überzählige Dateien (anfangs versteckt)
+        self._warn_frame = QFrame()
+        self._warn_frame.setVisible(False)
+        self._warn_frame.setStyleSheet(
+            "QFrame{background:#fff3cd;border:1px solid #ffc107;"
+            "border-radius:6px;padding:2px;}"
+        )
+        warn_lay = QVBoxLayout(self._warn_frame)
+        warn_lay.setContentsMargins(10, 6, 10, 6)
+        warn_lay.setSpacing(2)
+        self._warn_lbl = QLabel()
+        self._warn_lbl.setStyleSheet("color:#856404;font-size:11px;")
+        self._warn_lbl.setWordWrap(True)
+        warn_lay.addWidget(self._warn_lbl)
+        erg_lay.addWidget(self._warn_frame)
+
         erg_lay.addWidget(self._erg_table)
 
         hint_detail = QLabel("💡  Doppelklick für Details  |  Rechtsklick für Menü (Dateien öffnen, Carmen, Notiz)")
@@ -939,6 +966,32 @@ class WorkflowWidget(QWidget):
         self._status_lbl.setText(
             f"Abgleich abgeschlossen – {len(ergebnisse)} Paar(e) verglichen."
         )
+
+        # Warnungen: SM ohne DP / DP ohne SM
+        fehlende_dp = [
+            e.datei_staerke
+            for e in ergebnisse
+            if e.datei_dienstplan.startswith("(kein DP")
+        ]
+        fehlende_sm = [
+            e.datei_dienstplan
+            for e in ergebnisse
+            if e.datei_staerke in ("–", "")
+        ]
+        warn_zeilen = []
+        if fehlende_dp:
+            warn_zeilen.append(
+                f"⚠️  Kein Dienstplan gefunden für: {', '.join(fehlende_dp)}"
+            )
+        if fehlende_sm:
+            warn_zeilen.append(
+                f"⚠️  Keine Stärkemeldung gefunden für: {', '.join(fehlende_sm)}"
+            )
+        if warn_zeilen:
+            self._warn_lbl.setText("\n".join(warn_zeilen))
+            self._warn_frame.setVisible(True)
+        else:
+            self._warn_frame.setVisible(False)
 
         self._erg_table.setRowCount(len(ergebnisse))
         for ri, erg in enumerate(ergebnisse):
@@ -1189,10 +1242,9 @@ class WorkflowWidget(QWidget):
         self._dienstplan_pfade = []
         self._ergebnisse = []
         self._erg_table.setRowCount(0)
+        self._warn_frame.setVisible(False)
         self._status_lbl.setText("")
         self._update_start_btn()
-        # Dateilisten-Labels zurücksetzen
-        self._setup_ui.__func__  # keine neue UI, nur Status reset
 
     # ── Styles ─────────────────────────────────────────────────────────────────
 
