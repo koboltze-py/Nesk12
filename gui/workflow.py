@@ -332,14 +332,16 @@ def _abgleichen(
     # Pre-resolve 1b: DP compound-Nachnamen → SM single-Token-Match.
     # DP hat "el mojahid" als nachname, SM schreibt nur "mojahid".
     # → SM-Eintrag unter "mojahid" auf den DP-Key "el mojahid" remappen.
+    # Gleiches gilt für erstes Token: DP "moeeni mahvelati", SM "moeeni".
     for nn_d in list(d_by_nn.keys()):
         if " " in nn_d and nn_d not in s_by_nn:
-            last_d = nn_d.split()[-1]
-            if last_d in s_by_nn and last_d not in d_by_nn:
-                # SM hat nur letztes Token, DP hat den vollen Compound
-                for p in s_by_nn[last_d]:
-                    s_by_nn.setdefault(nn_d, []).append(p)
-                del s_by_nn[last_d]
+            parts_d = nn_d.split()
+            for token in (parts_d[-1], parts_d[0]):  # letztes UND erstes Token prüfen
+                if token in s_by_nn and token not in d_by_nn:
+                    for p in s_by_nn[token]:
+                        s_by_nn.setdefault(nn_d, []).append(p)
+                    del s_by_nn[token]
+                    break  # nur einmal remappen
 
     # Pre-resolve 2: Fuzzy-Matching für SM-Nachnamen ohne exakten DP-Treffer
     # (Tippfehler im Dienstplan, z.B. "Müler" statt "Müller").
