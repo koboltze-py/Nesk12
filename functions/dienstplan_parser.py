@@ -404,7 +404,20 @@ class DienstplanParser:
             'dienst_farbe':             dienst_farbe,
             'dienst_farbe_hex':         dienst_farbe_hex,
             'excel_row':                excel_row,
+            'notiz':                    self._lese_notiz(cells),
         }
+
+    def _lese_notiz(self, cells: list) -> str:
+        """Liest Notizen aus Zellen rechts von ENDE heraus (alles was dort als Text steht)."""
+        ende_col = self.column_map.get('ende') if self.column_map else None
+        if ende_col is None:
+            return ""
+        parts = []
+        for ci in range(ende_col + 1, len(cells)):
+            cv = cells[ci]
+            if cv is not None and isinstance(cv, str) and cv.strip():
+                parts.append(cv.strip())
+        return "  |  ".join(parts)
 
     def _check_cell_colors(self, name_cell_obj, dienst_cell_obj):
         """Liest Zellfarben aus und erkennt Bulmorfahrer (gelb) und Zebra-Zeilen (grau)."""
