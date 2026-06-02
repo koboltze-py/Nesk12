@@ -220,6 +220,28 @@ def _normiere_dienst(s: str) -> str:
     return s.strip().upper()
 
 
+def _stunde_von(zeit: str) -> str:
+    """Gibt nur die Stunden-Komponente als 'HH:00' zurück, z.B. '07:30' → '07:00'."""
+    m = re.match(r'(\d{1,2}):\d{2}', zeit)
+    return f"{int(m.group(1)):02d}:00" if m else zeit
+
+
+def _zeiten_stimmen_ueberein(sm_zeit: str, dp_zeit: str, ist_sl_dispo: bool) -> bool:
+    """
+    Vergleicht SM- und DP-Zeit.
+    Für SL/Dispo: SM-Zeiten sind auf die volle Stunde nach unten gerundet.
+    → Übereinstimmung wenn SM-Zeit == floor(DP-Zeit).
+    Für Betreuer: exakter Vergleich.
+    """
+    if not sm_zeit or not dp_zeit:
+        return True  # fehlende Zeit nicht als Abweichung werten
+    if sm_zeit == dp_zeit:
+        return True
+    if ist_sl_dispo:
+        return _stunde_von(dp_zeit) == sm_zeit
+    return False
+
+
 class AbgleichErgebnis:
     """Enthält alle Unterschiede zwischen Stärkemeldung und Dienstplan."""
 
@@ -371,15 +393,16 @@ def _abgleichen(
 
                 sm_kat = _sm_kat_zu_norm(sp.get("dienst", ""))
                 dp_kat = _dp_kat_zu_norm(dp.get("ist_dispo", False))
+                ist_sl_dispo = sm_kat == "Dispo"  # SL und Dispo werden gerundet
 
                 unterschiede: list[str] = []
                 if sm_kat != dp_kat:
                     unterschiede.append(f"Kategorie: SM={sm_kat} / DP={dp_kat}")
 
-                # Zeiten für alle Einträge vergleichen
-                if s_beginn != d_beginn and s_beginn and d_beginn:
+                # Zeiten vergleichen – SL/Dispo toleriert Rundung auf volle Stunde
+                if not _zeiten_stimmen_ueberein(s_beginn, d_beginn, ist_sl_dispo):
                     unterschiede.append(f"Beginn: SM={s_beginn} / DP={d_beginn}")
-                if s_ende != d_ende and s_ende and d_ende:
+                if not _zeiten_stimmen_ueberein(s_ende, d_ende, ist_sl_dispo):
                     unterschiede.append(f"Ende: SM={s_ende} / DP={d_ende}")
 
                 eintrag = {
