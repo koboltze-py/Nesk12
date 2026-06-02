@@ -121,15 +121,19 @@ def _parse_staerkemeldung(docx_path: str) -> dict:
                 tokens = name_raw.split()
                 if len(tokens) == 1:
                     nachname = tokens[0].lower()
+                    abbrev   = ""
                 elif len(tokens[-1]) <= 2:
-                    # Letztes Token ist Vorname-Abkürzung
+                    # Letztes Token ist Vorname-Abkürzung (z.B. "Blei Pa" → abbrev="pa")
                     nachname = " ".join(tokens[:-1]).lower()
+                    abbrev   = tokens[-1].lower()
                 else:
                     # Compound-Nachname (z.B. "El Mojahid")
                     nachname = name_raw.lower()
+                    abbrev   = ""
                 personen.append({
                     "vollname": name_raw,
                     "nachname": nachname,
+                    "abbrev":   abbrev,
                     "dienst":   aktueller_abschnitt,
                     "beginn":   beginn,
                     "ende":     ende,
@@ -276,6 +280,17 @@ def _abgleichen(
             if last_token != nn:
                 d_by_nn.setdefault(last_token, []).append(p)
 
+    # Pre-resolve: SM compound-Nachnamen ohne DP-Match → letztes Token versuchen.
+    # DP-Parser speichert nur das letzte Wort als Nachname ("Mojahid"),
+    # SM schreibt den vollen Compound-Namen ("El Mojahid").
+    for nn_c in list(s_by_nn.keys()):
+        if " " in nn_c and nn_c not in d_by_nn:
+            last = nn_c.split()[-1]
+            if last in d_by_nn and last not in s_by_nn:
+                for p in s_by_nn[nn_c]:
+                    s_by_nn.setdefault(last, []).append(p)
+                del s_by_nn[nn_c]
+
     alle_nn = set(s_by_nn) | set(d_by_nn)
 
     for nn in sorted(alle_nn):
@@ -287,8 +302,23 @@ def _abgleichen(
             gematchte_dp: set[int] = set()
 
             for sp in sp_liste:
-                # Besten DP-Match suchen (noch nicht gematcht)
-                dp = next((d for d in dp_liste if id(d) not in gematchte_dp), None)
+                abbrev = (sp.get("abbrev") or "").lower()
+
+                # Besten DP-Match suchen: erst per Vorname-Abkürzung, dann first-unmatched
+                dp = None
+                if abbrev:
+                    for d in dp_liste:
+                        if id(d) in gematchte_dp:
+                            continue
+                        # DP-Vollname ist "Vorname Nachname" → erstes Token ist Vorname
+                        vn_parts = d.get("vollname", "").split()
+                        vorname = vn_parts[0].lower() if vn_parts else ""
+                        if vorname.startswith(abbrev):
+                            dp = d
+                            break
+                if dp is None:
+                    # Fallback: erster noch-nicht-gematchter Eintrag
+                    dp = next((d for d in dp_liste if id(d) not in gematchte_dp), None)
                 if dp is None:
                     erg.nur_staerke.append({
                         "name":      sp.get("vollname", nn),
@@ -311,16 +341,14 @@ def _abgleichen(
                 if sm_kat != dp_kat:
                     unterschiede.append(f"Kategorie: SM={sm_kat} / DP={dp_kat}")
 
-                # Zeiten nur für Betreuer vergleichen –
-                # SL und Dispo werden in der SM auf volle Stunden gerundet (bekannt)
-                if sm_kat == "Betreuer":
-                    if s_beginn != d_beginn and s_beginn and d_beginn:
-                        unterschiede.append(f"Beginn: SM={s_beginn} / DP={d_beginn}")
-                    if s_ende != d_ende and s_ende and d_ende:
-                        unterschiede.append(f"Ende: SM={s_ende} / DP={d_ende}")
+                # Zeiten für alle Einträge vergleichen
+                if s_beginn != d_beginn and s_beginn and d_beginn:
+                    unterschiede.append(f"Beginn: SM={s_beginn} / DP={d_beginn}")
+                if s_ende != d_ende and s_ende and d_ende:
+                    unterschiede.append(f"Ende: SM={s_ende} / DP={d_ende}")
 
                 eintrag = {
-                    "name":      sp.get("vollname", nn),
+                    "name":      dp.get("vollname") or sp.get("vollname", nn),
                     "sm_dienst": sp.get("dienst",  ""),
                     "sm_beginn": sp.get("beginn",  ""),
                     "sm_ende":   sp.get("ende",    ""),
