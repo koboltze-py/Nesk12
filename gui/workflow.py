@@ -15,14 +15,18 @@ from datetime import datetime
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QFont, QColor
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGroupBox,
-    QHBoxLayout, QHeaderView, QLabel, QMenu, QMessageBox, QPushButton,
-    QScrollArea, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem,
-    QTextEdit, QVBoxLayout, QWidget, QProgressBar,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
+    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QMenu, QMessageBox,
+    QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter,
+    QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QProgressBar,
 )
 
 from config import BASE_DIR, FIORI_BLUE, FIORI_TEXT
-from database.workflow_db import lade_eintrag, speichere_eintrag, init_db
+from database.workflow_db import (
+    lade_eintrag, speichere_eintrag, init_db,
+    alle_monate, lade_session, speichere_session, loesche_session,
+)
 
 # ── Standardpfade ──────────────────────────────────────────────────────────────
 _BASE_ONEDRIVE = Path(BASE_DIR).parent.parent  # …/!Gemeinsam.26/
@@ -751,11 +755,19 @@ def _oeffne_datei(pfad: str):
 class WorkflowWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._monat:            str       = ""
         self._staerke_pfade:    list[str] = []
         self._dienstplan_pfade: list[str] = []
         self._ergebnisse:       list[AbgleichErgebnis] = []
         self._thread: _LadeThread | None = None
+        # Refs auf Dateilisten-Layouts (gesetzt in _build_datei_gruppe)
+        self._sm_vlay:     QVBoxLayout | None = None
+        self._sm_lbl_leer: QLabel      | None = None
+        self._dp_vlay:     QVBoxLayout | None = None
+        self._dp_lbl_leer: QLabel      | None = None
         self._setup_ui()
+        # Gespeicherte Monate laden und zuletzt genutzten vorauswählen
+        self._lade_monate_combo(auto_select=True)
 
     # ── UI ─────────────────────────────────────────────────────────────────────
 
@@ -777,6 +789,47 @@ class WorkflowWidget(QWidget):
         hint.setStyleSheet("color: #666; font-size: 11px;")
         hint.setWordWrap(True)
         root.addWidget(hint)
+
+        # ── Monat-Auswahl ──────────────────────────────────────────────────────
+        monat_frame = QFrame()
+        monat_frame.setStyleSheet(
+            "QFrame{background:#eaf4fb;border:1px solid #aed6f1;border-radius:6px;padding:2px;}"
+        )
+        monat_lay = QHBoxLayout(monat_frame)
+        monat_lay.setContentsMargins(10, 6, 10, 6)
+        monat_lay.setSpacing(10)
+
+        monat_lbl = QLabel("📅  Monat:")
+        monat_lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #1a5276; background: transparent; border: none;")
+        monat_lay.addWidget(monat_lbl)
+
+        self._monat_combo = QComboBox()
+        self._monat_combo.setMinimumWidth(200)
+        self._monat_combo.setStyleSheet(
+            "QComboBox{font-size:12px;padding:3px 8px;border:1px solid #aed6f1;"
+            "border-radius:4px;background:white;}"
+        )
+        self._monat_combo.currentIndexChanged.connect(self._monat_gewaehlt)
+        monat_lay.addWidget(self._monat_combo)
+
+        btn_neu = QPushButton("📅  Neuer Monat")
+        btn_neu.setMinimumHeight(32)
+        btn_neu.setStyleSheet(self._btn_style("#27ae60", "#1e8449"))
+        btn_neu.clicked.connect(self._neuer_monat)
+        monat_lay.addWidget(btn_neu)
+
+        self._btn_monat_loeschen = QPushButton("🗑  Monat entfernen")
+        self._btn_monat_loeschen.setMinimumHeight(32)
+        self._btn_monat_loeschen.setEnabled(False)
+        self._btn_monat_loeschen.setStyleSheet(self._btn_style("#e74c3c", "#c0392b"))
+        self._btn_monat_loeschen.clicked.connect(self._monat_loeschen)
+        monat_lay.addWidget(self._btn_monat_loeschen)
+
+        self._monat_info_lbl = QLabel("")
+        self._monat_info_lbl.setStyleSheet("color:#1a5276;font-size:11px;background:transparent;border:none;")
+        monat_lay.addWidget(self._monat_info_lbl)
+        monat_lay.addStretch()
+        root.addWidget(monat_frame)
 
         # Dateiauswahl-Bereich
         datei_row = QHBoxLayout()
@@ -923,6 +976,14 @@ class WorkflowWidget(QWidget):
         vlay.addWidget(lbl_leer)
         vlay.addStretch()
 
+        # Refs für späteres Aktualisieren durch Monat-Selektor
+        if key == "staerke":
+            self._sm_vlay     = vlay
+            self._sm_lbl_leer = lbl_leer
+        else:
+            self._dp_vlay     = vlay
+            self._dp_lbl_leer = lbl_leer
+
         # Buttons
         btn_lay = QHBoxLayout()
         btn_laden = QPushButton("📂  Dateien laden")
@@ -971,6 +1032,7 @@ class WorkflowWidget(QWidget):
 
         self._aktualisiere_dateiliste(vlay, lbl_leer, dateien)
         self._update_start_btn()
+        self._speichere_session_wenn_monat()
 
     def _clear_dateien(self, key: str, vlay: QVBoxLayout, lbl_leer: QLabel):
         if key == "staerke":
@@ -979,6 +1041,15 @@ class WorkflowWidget(QWidget):
             self._dienstplan_pfade = []
         self._aktualisiere_dateiliste(vlay, lbl_leer, [])
         self._update_start_btn()
+        self._speichere_session_wenn_monat()
+
+    def _speichere_session_wenn_monat(self) -> None:
+        """Schreibt die aktuellen Dateilisten in die DB, wenn ein Monat gewählt ist."""
+        if self._monat:
+            speichere_session(self._monat, self._staerke_pfade, self._dienstplan_pfade)
+            self._monat_info_lbl.setText(
+                f"💾 Gespeichert – {len(self._staerke_pfade)} SM | {len(self._dienstplan_pfade)} DP"
+            )
 
     def _aktualisiere_dateiliste(self, vlay: QVBoxLayout, lbl_leer: QLabel, dateien: list[str]):
         # Alle alten Widgets entfernen
@@ -1299,6 +1370,157 @@ class WorkflowWidget(QWidget):
             )
             self._aktualisiere_zeile(ri, erg)
 
+    # ── Monat-Verwaltung ────────────────────────────────────────────────────────
+
+    _MONATSNAMEN = [
+        "Januar", "Februar", "März", "April", "Mai", "Juni",
+        "Juli", "August", "September", "Oktober", "November", "Dezember",
+    ]
+
+    def _monat_label(self, monat: str) -> str:
+        """Wandelt 'YYYY-MM' in 'Januar 2026' um."""
+        try:
+            j, m = monat.split("-")
+            return f"{self._MONATSNAMEN[int(m) - 1]} {j}"
+        except Exception:
+            return monat
+
+    def _lade_monate_combo(self, auto_select: bool = False) -> None:
+        """Füllt die ComboBox mit gespeicherten Monaten."""
+        self._monat_combo.blockSignals(True)
+        aktueller = self._monat  # merken
+        self._monat_combo.clear()
+        self._monat_combo.addItem("── Monat wählen ──", "")
+        monate = alle_monate()
+        for m in monate:
+            self._monat_combo.addItem(self._monat_label(m), m)
+        self._monat_combo.blockSignals(False)
+
+        if auto_select and monate:
+            # letzten Monat vorauswählen (neueste zuerst → Index 1)
+            self._monat_combo.setCurrentIndex(1)
+            self._monat_gewaehlt(1)
+        elif aktueller:
+            idx = self._monat_combo.findData(aktueller)
+            if idx >= 0:
+                self._monat_combo.blockSignals(True)
+                self._monat_combo.setCurrentIndex(idx)
+                self._monat_combo.blockSignals(False)
+
+    def _neuer_monat(self) -> None:
+        """Dialog zum Anlegen eines neuen Monats."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("📅  Neuen Monat anlegen")
+        dlg.resize(300, 130)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(16, 12, 16, 12)
+        lay.setSpacing(10)
+
+        form = QHBoxLayout()
+        monat_box = QComboBox()
+        for name in self._MONATSNAMEN:
+            monat_box.addItem(name)
+        aktuell = datetime.now()
+        monat_box.setCurrentIndex(aktuell.month - 1)
+        monat_box.setMinimumWidth(130)
+        form.addWidget(monat_box)
+
+        jahr_spin = QSpinBox()
+        jahr_spin.setRange(2020, 2040)
+        jahr_spin.setValue(aktuell.year)
+        form.addWidget(jahr_spin)
+        lay.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        lay.addWidget(buttons)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        monat_str = f"{jahr_spin.value():04d}-{monat_box.currentIndex() + 1:02d}"
+        # Session anlegen falls noch nicht vorhanden
+        speichere_session(monat_str, [], [])
+        self._lade_monate_combo()
+        idx = self._monat_combo.findData(monat_str)
+        if idx >= 0:
+            self._monat_combo.setCurrentIndex(idx)
+            # _monat_gewaehlt wird über Signal ausgelöst
+
+    def _monat_gewaehlt(self, idx: int) -> None:
+        """Wird aufgerufen wenn ein Monat in der ComboBox gewählt wird."""
+        monat = self._monat_combo.itemData(idx) or ""
+        self._monat = monat
+        self._btn_monat_loeschen.setEnabled(bool(monat))
+
+        if not monat:
+            self._monat_info_lbl.setText("")
+            return
+
+        # Session aus DB laden
+        import json as _json
+        session = lade_session(monat)
+        sm_pfade = _json.loads(session.get("sm_pfade") or "[]")
+        dp_pfade = _json.loads(session.get("dp_pfade") or "[]")
+
+        # Nicht mehr existierende Pfade herausfiltern
+        sm_pfade = [p for p in sm_pfade if os.path.isfile(p)]
+        dp_pfade = [p for p in dp_pfade if os.path.isfile(p)]
+
+        self._staerke_pfade    = sm_pfade
+        self._dienstplan_pfade = dp_pfade
+
+        # Dateilisten-UI aktualisieren
+        if self._sm_vlay and self._sm_lbl_leer:
+            self._aktualisiere_dateiliste(self._sm_vlay, self._sm_lbl_leer, sm_pfade)
+        if self._dp_vlay and self._dp_lbl_leer:
+            self._aktualisiere_dateiliste(self._dp_vlay, self._dp_lbl_leer, dp_pfade)
+        self._update_start_btn()
+
+        if sm_pfade and dp_pfade:
+            self._monat_info_lbl.setText(
+                f"✅ {len(sm_pfade)} SM | {len(dp_pfade)} DP – starte Abgleich …"
+            )
+            self._starte_abgleich()
+        elif sm_pfade or dp_pfade:
+            self._monat_info_lbl.setText(
+                f"📂 {len(sm_pfade)} SM, {len(dp_pfade)} DP geladen – bitte fehlende Dateien laden"
+            )
+        else:
+            self._monat_info_lbl.setText("Noch keine Dateien geladen")
+
+    def _monat_loeschen(self) -> None:
+        """Entfernt den aktuellen Monat aus der Session-DB (Carmen/Notizen bleiben)."""
+        if not self._monat:
+            return
+        antwort = QMessageBox.question(
+            self,
+            "Monat entfernen",
+            f"Soll der Monat <b>{self._monat_label(self._monat)}</b> aus der Liste entfernt werden?\n\n"
+            "Carmen-Abgleich-Status und Notizen bleiben erhalten.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if antwort != QMessageBox.StandardButton.Yes:
+            return
+        loesche_session(self._monat)
+        self._monat = ""
+        self._lade_monate_combo()
+        # UI leeren
+        self._staerke_pfade    = []
+        self._dienstplan_pfade = []
+        self._ergebnisse       = []
+        self._erg_table.setRowCount(0)
+        self._warn_frame.setVisible(False)
+        self._status_lbl.setText("")
+        self._update_start_btn()
+        if self._sm_vlay and self._sm_lbl_leer:
+            self._aktualisiere_dateiliste(self._sm_vlay, self._sm_lbl_leer, [])
+        if self._dp_vlay and self._dp_lbl_leer:
+            self._aktualisiere_dateiliste(self._dp_vlay, self._dp_lbl_leer, [])
+
     def _reset(self):
         self._staerke_pfade = []
         self._dienstplan_pfade = []
@@ -1306,7 +1528,12 @@ class WorkflowWidget(QWidget):
         self._erg_table.setRowCount(0)
         self._warn_frame.setVisible(False)
         self._status_lbl.setText("")
+        self._monat_info_lbl.setText("Dateien zurückgesetzt – bitte neu laden")
         self._update_start_btn()
+        if self._sm_vlay and self._sm_lbl_leer:
+            self._aktualisiere_dateiliste(self._sm_vlay, self._sm_lbl_leer, [])
+        if self._dp_vlay and self._dp_lbl_leer:
+            self._aktualisiere_dateiliste(self._dp_vlay, self._dp_lbl_leer, [])
 
     # ── Styles ─────────────────────────────────────────────────────────────────
 

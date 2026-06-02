@@ -29,7 +29,7 @@ def _get_conn() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Erstellt die Tabelle falls noch nicht vorhanden."""
+    """Erstellt die Tabellen falls noch nicht vorhanden."""
     Path(WORKFLOW_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     with _get_conn() as conn:
         conn.execute("""
@@ -43,6 +43,15 @@ def init_db() -> None:
                 notiz                TEXT    NOT NULL DEFAULT '',
                 geaendert_am         TEXT,
                 UNIQUE(datum, sm_datei)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS workflow_session (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                monat     TEXT    NOT NULL UNIQUE,
+                sm_pfade  TEXT    NOT NULL DEFAULT '[]',
+                dp_pfade  TEXT    NOT NULL DEFAULT '[]',
+                last_used TEXT
             )
         """)
         conn.commit()
@@ -136,3 +145,60 @@ def alle_eintraege() -> list[dict]:
         return conn.execute(
             "SELECT * FROM workflow_tag ORDER BY datum, sm_datei"
         ).fetchall()
+
+
+# ── Session-Persistenz (geladene Monats-Dateien) ─────────────────────────────
+
+import json as _json  # noqa: E402  (nach den anderen imports)
+
+
+def alle_monate() -> list[str]:
+    """Gibt alle gespeicherten Monate zurück (YYYY-MM), neueste zuerst."""
+    _ensure_init()
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT monat FROM workflow_session ORDER BY monat DESC"
+        ).fetchall()
+    return [r["monat"] for r in rows]
+
+
+def lade_session(monat: str) -> dict:
+    """Gibt Session-Daten für einen Monat zurück oder Default-Dict."""
+    _ensure_init()
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM workflow_session WHERE monat=?", (monat,)
+        ).fetchone()
+    return row or {"monat": monat, "sm_pfade": "[]", "dp_pfade": "[]", "last_used": None}
+
+
+def speichere_session(monat: str, sm_pfade: list, dp_pfade: list) -> None:
+    """Speichert/aktualisiert die Dateilisten für einen Monat."""
+    _ensure_init()
+    jetzt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO workflow_session (monat, sm_pfade, dp_pfade, last_used)
+            VALUES (?,?,?,?)
+            ON CONFLICT(monat) DO UPDATE SET
+                sm_pfade  = excluded.sm_pfade,
+                dp_pfade  = excluded.dp_pfade,
+                last_used = excluded.last_used
+            """,
+            (
+                monat,
+                _json.dumps(sm_pfade, ensure_ascii=False),
+                _json.dumps(dp_pfade, ensure_ascii=False),
+                jetzt,
+            ),
+        )
+        conn.commit()
+
+
+def loesche_session(monat: str) -> None:
+    """Löscht die Session eines Monats (Dateilisten, nicht Carmen/Notizen)."""
+    _ensure_init()
+    with _get_conn() as conn:
+        conn.execute("DELETE FROM workflow_session WHERE monat=?", (monat,))
+        conn.commit()
