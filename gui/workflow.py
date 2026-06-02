@@ -385,19 +385,18 @@ class _LadeThread(QThread):
 
             for sm in sm_data:
                 sm_datum = sm.get("datum", "")
+                # Strikt datum-basiertes Matching: Start-Datum der SM bestimmt den DP
                 candidates = dp_by_datum.get(sm_datum, []) if sm_datum else []
-                # noch nicht gematchte Kandidaten bevorzugen
                 unmatch = [c for c in candidates if id(c) not in matched_dp]
                 if unmatch:
                     dp_match = unmatch[0]
                     matched_dp.add(id(dp_match))
-                elif dp_data:
-                    # kein Datum-Match → einfach der Reihe nach
-                    unmatched_all = [d for d in dp_data if id(d) not in matched_dp]
-                    dp_match = unmatched_all[0] if unmatched_all else dp_data[0]
-                    matched_dp.add(id(dp_match))
+                elif not sm_datum:
+                    # Kein Datum extrahierbar – mit leerem Platzhalter anzeigen
+                    dp_match = {"datei": "(kein Datum)", "datum": "", "personen": []}
                 else:
-                    dp_match = {"datei": "–", "datum": "", "personen": []}
+                    # Datum vorhanden, aber kein passender DP gefunden
+                    dp_match = {"datei": f"(kein DP f\u00fcr {sm_datum})", "datum": sm_datum, "personen": []}
 
                 ergebnisse.append(_abgleichen(sm, dp_match))
 
