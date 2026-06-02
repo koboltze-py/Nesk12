@@ -6,15 +6,17 @@ Lädt beliebig viele Stärkemeldungen (Word .docx) und Tagesdienstpläne
 """
 from __future__ import annotations
 
+import os
 import re
+from difflib import get_close_matches
 from pathlib import Path
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtCore import Qt, QThread, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QFont, QColor
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFrame, QGroupBox,
-    QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton,
+    QHBoxLayout, QHeaderView, QLabel, QMenu, QMessageBox, QPushButton,
     QScrollArea, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QProgressBar,
 )
@@ -221,9 +223,12 @@ def _normiere_dienst(s: str) -> str:
 class AbgleichErgebnis:
     """Enthält alle Unterschiede zwischen Stärkemeldung und Dienstplan."""
 
-    def __init__(self, datei_staerke: str, datei_dienstplan: str):
+    def __init__(self, datei_staerke: str, datei_dienstplan: str,
+                 pfad_staerke: str = "", pfad_dienstplan: str = ""):
         self.datei_staerke    = datei_staerke
         self.datei_dienstplan = datei_dienstplan
+        self.pfad_staerke     = pfad_staerke     # voller Dateipfad zur .docx
+        self.pfad_dienstplan  = pfad_dienstplan  # voller Dateipfad zur .xlsx
         self.ok:         list[dict] = []   # identisch
         self.abweichung: list[dict] = []   # Unterschied im Dienst/Zeit
         self.nur_staerke: list[dict] = []  # in Stärke, nicht im Dienstplan
@@ -246,15 +251,20 @@ def _dp_kat_zu_norm(ist_dispo: bool) -> str:
 def _abgleichen(
     staerke_data: dict,
     dienstplan_data: dict,
+    pfad_staerke: str = "",
+    pfad_dienstplan: str = "",
 ) -> AbgleichErgebnis:
     """
     Gleicht SM-Personen mit DP-Personen ab.
     Matching erfolgt über den Nachnamen (SM hat nur Nachname).
     Bei Namensgleichheit werden Zeiten und Kategorie (Dispo/Betreuer) verglichen.
+    Fuzzy-Fallback (difflib, cutoff 0.82) für Tippfehler in DP-Namen.
     """
     erg = AbgleichErgebnis(
         staerke_data.get("datei", ""),
         dienstplan_data.get("datei", ""),
+        pfad_staerke=pfad_staerke,
+        pfad_dienstplan=pfad_dienstplan,
     )
 
     # Index aufbauen: nachname (lower) → list[dict]
@@ -280,7 +290,7 @@ def _abgleichen(
             if last_token != nn:
                 d_by_nn.setdefault(last_token, []).append(p)
 
-    # Pre-resolve: SM compound-Nachnamen ohne DP-Match → letztes Token versuchen.
+    # Pre-resolve 1: SM compound-Nachnamen ohne DP-Match → letztes Token versuchen.
     # DP-Parser speichert nur das letzte Wort als Nachname ("Mojahid"),
     # SM schreibt den vollen Compound-Namen ("El Mojahid").
     for nn_c in list(s_by_nn.keys()):
@@ -290,6 +300,24 @@ def _abgleichen(
                 for p in s_by_nn[nn_c]:
                     s_by_nn.setdefault(last, []).append(p)
                 del s_by_nn[nn_c]
+
+    # Pre-resolve 2: Fuzzy-Matching für SM-Nachnamen ohne exakten DP-Treffer
+    # (Tippfehler im Dienstplan, z.B. "Müler" statt "Müller").
+    dp_nn_keys = list(d_by_nn.keys())
+    for nn_s in list(s_by_nn.keys()):
+        if nn_s not in d_by_nn:
+            matches = get_close_matches(nn_s, dp_nn_keys, n=1, cutoff=0.82)
+            if matches:
+                fuzzy_nn = matches[0]
+                # Nur remappen wenn DP-Key noch nicht direkt von SM belegt
+                if fuzzy_nn not in s_by_nn:
+                    for p in s_by_nn[nn_s]:
+                        # Tippfehler-Hinweis im vollname ergänzen
+                        p = dict(p)
+                        dp_sample = d_by_nn[fuzzy_nn][0]
+                        p["vollname"] = p.get("vollname", nn_s) + f" [≈ {dp_sample.get('vollname', fuzzy_nn)}]"
+                        s_by_nn.setdefault(fuzzy_nn, []).append(p)
+                    del s_by_nn[nn_s]
 
     alle_nn = set(s_by_nn) | set(d_by_nn)
 
@@ -413,13 +441,17 @@ class _LadeThread(QThread):
             sm_data: list[dict] = []
             for pfad in self._staerke:
                 self.fortschritt.emit(f"  Lese: {Path(pfad).name}")
-                sm_data.append(_parse_staerkemeldung(pfad))
+                d = _parse_staerkemeldung(pfad)
+                d["_pfad"] = pfad
+                sm_data.append(d)
 
             self.fortschritt.emit("Dienstpläne werden geladen …")
             dp_data: list[dict] = []
             for pfad in self._dienstplan:
                 self.fortschritt.emit(f"  Lese: {Path(pfad).name}")
-                dp_data.append(_parse_dienstplan_fuer_abgleich(pfad))
+                d2 = _parse_dienstplan_fuer_abgleich(pfad)
+                d2["_pfad"] = pfad
+                dp_data.append(d2)
 
             # Abgleich: versuche Datum-Matching
             self.fortschritt.emit("Abgleich wird durchgeführt …")
@@ -447,13 +479,21 @@ class _LadeThread(QThread):
                     # Datum vorhanden, aber kein passender DP gefunden
                     dp_match = {"datei": f"(kein DP f\u00fcr {sm_datum})", "datum": sm_datum, "personen": []}
 
-                ergebnisse.append(_abgleichen(sm, dp_match))
+                ergebnisse.append(_abgleichen(
+                    sm, dp_match,
+                    pfad_staerke=sm.get("_pfad", ""),
+                    pfad_dienstplan=dp_match.get("_pfad", ""),
+                ))
 
             # Übriggebliebene Dienstpläne ohne Stärkemeldung
             for dp in dp_data:
                 if id(dp) not in matched_dp:
                     sm_leer = {"datei": "–", "datum": "", "personen": []}
-                    ergebnisse.append(_abgleichen(sm_leer, dp))
+                    ergebnisse.append(_abgleichen(
+                        sm_leer, dp,
+                        pfad_staerke="",
+                        pfad_dienstplan=dp.get("_pfad", ""),
+                    ))
 
             self.fertig.emit(ergebnisse)
         except Exception as exc:
@@ -465,6 +505,7 @@ class _LadeThread(QThread):
 class _DetailDialog(QDialog):
     def __init__(self, erg: AbgleichErgebnis, parent=None):
         super().__init__(parent)
+        self._erg = erg
         self.setWindowTitle(f"🔍  Detail: {erg.datei_staerke} ↔ {erg.datei_dienstplan}")
         self.resize(900, 600)
         lay = QVBoxLayout(self)
@@ -494,6 +535,10 @@ class _DetailDialog(QDialog):
         tbl.setAlternatingRowColors(True)
         tbl.verticalHeader().setVisible(False)
         tbl.setStyleSheet("font-size: 11px;")
+        tbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        tbl.customContextMenuRequested.connect(
+            lambda pos: self._kontext_menu(tbl, pos)
+        )
 
         rows: list[tuple[str, dict, QColor]] = []
         for e in erg.abweichung:
@@ -536,14 +581,57 @@ class _DetailDialog(QDialog):
 
         lay.addWidget(tbl)
 
-        btn = QPushButton("Schließen")
-        btn.clicked.connect(self.accept)
-        btn.setStyleSheet(
+        btn_row = QHBoxLayout()
+        btn_sm = QPushButton("📄  SM öffnen")
+        btn_sm.setEnabled(bool(erg.pfad_staerke and os.path.isfile(erg.pfad_staerke)))
+        btn_sm.clicked.connect(lambda: _oeffne_datei(erg.pfad_staerke))
+        btn_sm.setStyleSheet(
+            f"QPushButton{{background:#2980b9;color:white;border:none;border-radius:4px;"
+            f"padding:6px 14px;font-size:11px;font-weight:bold;}}"
+            f"QPushButton:hover{{background:#1a6ea8;}}"
+            f"QPushButton:disabled{{background:#ccc;color:#888;}}"
+        )
+        btn_dp = QPushButton("📋  Dienstplan öffnen")
+        btn_dp.setEnabled(bool(erg.pfad_dienstplan and os.path.isfile(erg.pfad_dienstplan)))
+        btn_dp.clicked.connect(lambda: _oeffne_datei(erg.pfad_dienstplan))
+        btn_dp.setStyleSheet(
+            f"QPushButton{{background:#27ae60;color:white;border:none;border-radius:4px;"
+            f"padding:6px 14px;font-size:11px;font-weight:bold;}}"
+            f"QPushButton:hover{{background:#1e8449;}}"
+            f"QPushButton:disabled{{background:#ccc;color:#888;}}"
+        )
+        btn_close = QPushButton("Schließen")
+        btn_close.clicked.connect(self.accept)
+        btn_close.setStyleSheet(
             f"QPushButton{{background:{FIORI_BLUE};color:white;border:none;border-radius:4px;"
             f"padding:6px 18px;font-size:12px;font-weight:bold;}}"
             f"QPushButton:hover{{background:#1a5276;}}"
         )
-        lay.addWidget(btn, alignment=Qt.AlignmentFlag.AlignRight)
+        btn_row.addWidget(btn_sm)
+        btn_row.addWidget(btn_dp)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_close)
+        lay.addLayout(btn_row)
+
+    def _kontext_menu(self, tbl: QTableWidget, pos):
+        menu = QMenu(self)
+        a_sm = menu.addAction("📄  Stärkemeldung öffnen")
+        a_sm.setEnabled(bool(self._erg.pfad_staerke and os.path.isfile(self._erg.pfad_staerke)))
+        a_dp = menu.addAction("📋  Tagesdienstplan öffnen")
+        a_dp.setEnabled(bool(self._erg.pfad_dienstplan and os.path.isfile(self._erg.pfad_dienstplan)))
+        action = menu.exec(tbl.viewport().mapToGlobal(pos))
+        if action == a_sm:
+            _oeffne_datei(self._erg.pfad_staerke)
+        elif action == a_dp:
+            _oeffne_datei(self._erg.pfad_dienstplan)
+
+
+# ── Hilfsfunktionen ───────────────────────────────────────────────────────────
+
+def _oeffne_datei(pfad: str):
+    """Öffnet eine Datei mit dem systemseitigen Standardprogramm."""
+    if pfad and os.path.isfile(pfad):
+        QDesktopServices.openUrl(QUrl.fromLocalFile(pfad))
 
 
 # ── Haupt-Widget ───────────────────────────────────────────────────────────────
@@ -657,9 +745,11 @@ class WorkflowWidget(QWidget):
         self._erg_table.verticalHeader().setVisible(False)
         self._erg_table.setStyleSheet("font-size: 11px;")
         self._erg_table.doubleClicked.connect(self._detail_zeigen)
+        self._erg_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._erg_table.customContextMenuRequested.connect(self._kontext_menu_erg)
         erg_lay.addWidget(self._erg_table)
 
-        hint_detail = QLabel("💡  Doppelklick auf eine Zeile für Detailansicht")
+        hint_detail = QLabel("💡  Doppelklick für Details  |  Rechtsklick zum Öffnen der Dateien")
         hint_detail.setStyleSheet("color: #888; font-size: 10px;")
         erg_lay.addWidget(hint_detail)
 
@@ -855,6 +945,36 @@ class WorkflowWidget(QWidget):
         if 0 <= ri < len(self._ergebnisse):
             dlg = _DetailDialog(self._ergebnisse[ri], self)
             dlg.exec()
+
+    def _kontext_menu_erg(self, pos):
+        ri = self._erg_table.rowAt(pos.y())
+        if ri < 0 or ri >= len(self._ergebnisse):
+            return
+        erg = self._ergebnisse[ri]
+        menu = QMenu(self)
+        a_detail = menu.addAction("🔍  Details anzeigen")
+        menu.addSeparator()
+        a_sm = menu.addAction("📄  Stärkemeldung öffnen")
+        a_sm.setEnabled(bool(erg.pfad_staerke and os.path.isfile(erg.pfad_staerke)))
+        a_dp = menu.addAction("📋  Tagesdienstplan öffnen")
+        a_dp.setEnabled(bool(erg.pfad_dienstplan and os.path.isfile(erg.pfad_dienstplan)))
+        menu.addSeparator()
+        a_beide = menu.addAction("📂  Beide Dateien öffnen")
+        a_beide.setEnabled(
+            bool(erg.pfad_staerke and os.path.isfile(erg.pfad_staerke))
+            and bool(erg.pfad_dienstplan and os.path.isfile(erg.pfad_dienstplan))
+        )
+        action = menu.exec(self._erg_table.viewport().mapToGlobal(pos))
+        if action == a_detail:
+            dlg = _DetailDialog(erg, self)
+            dlg.exec()
+        elif action == a_sm:
+            _oeffne_datei(erg.pfad_staerke)
+        elif action == a_dp:
+            _oeffne_datei(erg.pfad_dienstplan)
+        elif action == a_beide:
+            _oeffne_datei(erg.pfad_staerke)
+            _oeffne_datei(erg.pfad_dienstplan)
 
     def _reset(self):
         self._staerke_pfade = []
