@@ -940,6 +940,8 @@ class WorkflowWidget(QWidget):
 
             # DB-Eintrag laden (Carmen + Notiz)
             db_entry = lade_eintrag(erg.datum, erg.datei_staerke)
+            ist_carmen = bool(db_entry.get("abgeglichen_carmen"))
+            notiz_text = db_entry.get("notiz") or ""
 
             vals = [
                 erg.datei_staerke,
@@ -948,12 +950,13 @@ class WorkflowWidget(QWidget):
                 str(len(erg.abweichung)),
                 str(len(erg.nur_staerke)),
                 str(len(erg.nur_dienstplan)),
-                "✓ Carmen" if db_entry.get("abgeglichen_carmen") else "",
-                db_entry.get("notiz") or "",
             ]
             for ci, v in enumerate(vals):
                 item = QTableWidgetItem(v)
                 item.setBackground(bg)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if ci in (0, 1):
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
                 if ci == 3 and erg.abweichung:
                     item.setForeground(QColor("#856404"))
                     item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
@@ -961,15 +964,43 @@ class WorkflowWidget(QWidget):
                     item.setForeground(QColor("#c0392b"))
                 if ci == 5 and erg.nur_dienstplan:
                     item.setForeground(QColor("#1a6ea8"))
-                if ci == 6 and db_entry.get("abgeglichen_carmen"):
-                    item.setForeground(QColor("#1e8449"))
-                    item.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-                    ts = db_entry.get("abgeglichen_carmen_am") or ""
-                    if ts:
-                        item.setToolTip(f"Mit Carmen abgeglichen am {ts}")
-                if ci == 7 and v:
-                    item.setToolTip(v)
                 self._erg_table.setItem(ri, ci, item)
+
+            # Spalte 6: Carmen – grüner Hintergrund + ✓ wenn abgeglichen, sonst gedimmtes –
+            c_item = QTableWidgetItem()
+            c_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if ist_carmen:
+                c_item.setText("✓")
+                c_item.setBackground(QColor("#d5f5e3"))
+                c_item.setForeground(QColor("#1e8449"))
+                c_item.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+                ts = db_entry.get("abgeglichen_carmen_am") or ""
+                c_item.setToolTip(f"Mit Carmen abgeglichen am {ts}" if ts else "Mit Carmen abgeglichen")
+            else:
+                c_item.setText("—")
+                c_item.setBackground(QColor("#f2f3f4"))
+                c_item.setForeground(QColor("#bdc3c7"))
+                c_item.setFont(QFont("Segoe UI", 11))
+                c_item.setToolTip("Noch nicht mit Carmen abgeglichen")
+            self._erg_table.setItem(ri, 6, c_item)
+
+            # Spalte 7: Notiz – 📝 Icon wenn vorhanden, sonst gedimmtes –
+            n_item = QTableWidgetItem()
+            n_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if notiz_text:
+                n_item.setText("📝")
+                n_item.setBackground(QColor("#fef9e7"))
+                n_item.setForeground(QColor("#7d6608"))
+                n_item.setFont(QFont("Segoe UI", 13))
+                vorschau = notiz_text[:120] + ("…" if len(notiz_text) > 120 else "")
+                n_item.setToolTip(vorschau)
+            else:
+                n_item.setText("—")
+                n_item.setBackground(QColor("#f2f3f4"))
+                n_item.setForeground(QColor("#bdc3c7"))
+                n_item.setFont(QFont("Segoe UI", 11))
+                n_item.setToolTip("Keine Notiz")
+            self._erg_table.setItem(ri, 7, n_item)
 
         if ergebnisse:
             gesamt_ok   = sum(len(e.ok)          for e in ergebnisse)
@@ -1050,16 +1081,37 @@ class WorkflowWidget(QWidget):
         notiz_text = db_entry.get("notiz") or ""
 
         item6 = self._erg_table.item(ri, 6) or QTableWidgetItem()
-        item6.setText("✓ Carmen" if ist_carmen else "")
-        item6.setForeground(QColor("#1e8449") if ist_carmen else QColor("#000000"))
-        item6.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold if ist_carmen else QFont.Weight.Normal))
-        ts = db_entry.get("abgeglichen_carmen_am") or ""
-        item6.setToolTip(f"Mit Carmen abgeglichen am {ts}" if ts else "")
+        item6.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if ist_carmen:
+            item6.setText("✓")
+            item6.setBackground(QColor("#d5f5e3"))
+            item6.setForeground(QColor("#1e8449"))
+            item6.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+            ts = db_entry.get("abgeglichen_carmen_am") or ""
+            item6.setToolTip(f"Mit Carmen abgeglichen am {ts}" if ts else "Mit Carmen abgeglichen")
+        else:
+            item6.setText("—")
+            item6.setBackground(QColor("#f2f3f4"))
+            item6.setForeground(QColor("#bdc3c7"))
+            item6.setFont(QFont("Segoe UI", 11))
+            item6.setToolTip("Noch nicht mit Carmen abgeglichen")
         self._erg_table.setItem(ri, 6, item6)
 
         item7 = self._erg_table.item(ri, 7) or QTableWidgetItem()
-        item7.setText(notiz_text)
-        item7.setToolTip(notiz_text)
+        item7.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if notiz_text:
+            item7.setText("📝")
+            item7.setBackground(QColor("#fef9e7"))
+            item7.setForeground(QColor("#7d6608"))
+            item7.setFont(QFont("Segoe UI", 13))
+            vorschau = notiz_text[:120] + ("…" if len(notiz_text) > 120 else "")
+            item7.setToolTip(vorschau)
+        else:
+            item7.setText("—")
+            item7.setBackground(QColor("#f2f3f4"))
+            item7.setForeground(QColor("#bdc3c7"))
+            item7.setFont(QFont("Segoe UI", 11))
+            item7.setToolTip("Keine Notiz")
         self._erg_table.setItem(ri, 7, item7)
 
     def _notiz_bearbeiten(self, ri: int, erg) -> None:
