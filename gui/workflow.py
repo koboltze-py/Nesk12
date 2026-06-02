@@ -182,6 +182,9 @@ def _parse_dienstplan_fuer_abgleich(xlsx_path: str) -> dict:
     for p in result.get("betreuer", []) + result.get("dispo", []):
         # Korrekter Key aus DienstplanParser ist "dienst_kategorie" (z.B. T, N, DT, DN)
         dienst   = p.get("dienst_kategorie") or ""
+        # R = Rufbereitschaft → wird nicht in der SM erfasst, daher beim Abgleich ignorieren
+        if dienst.strip().upper() == "R":
+            continue
         nachname = (p.get("nachname") or "").strip().lower()
         personen.append({
             "vollname": p.get("vollname", "").strip(),
