@@ -284,14 +284,9 @@ def _abgleichen(
             nn = parts[-1].lower() if parts else ""
         if nn:
             d_by_nn.setdefault(nn, []).append(p)
-            # Compound-Nachname auch mit letztem Token indexieren
-            # "el mojahid" → auch "mojahid"; "el karfouh" → auch "karfouh"
-            last_token = nn.split()[-1]
-            if last_token != nn:
-                d_by_nn.setdefault(last_token, []).append(p)
 
-    # Pre-resolve 1: SM compound-Nachnamen ohne DP-Match → letztes Token versuchen.
-    # DP-Parser speichert nur das letzte Wort als Nachname ("Mojahid"),
+    # Pre-resolve 1a: SM compound-Nachnamen ohne DP-Match → letztes Token versuchen.
+    # DP-Parser speichert manchmal nur das letzte Wort als Nachname ("Mojahid"),
     # SM schreibt den vollen Compound-Namen ("El Mojahid").
     for nn_c in list(s_by_nn.keys()):
         if " " in nn_c and nn_c not in d_by_nn:
@@ -300,6 +295,18 @@ def _abgleichen(
                 for p in s_by_nn[nn_c]:
                     s_by_nn.setdefault(last, []).append(p)
                 del s_by_nn[nn_c]
+
+    # Pre-resolve 1b: DP compound-Nachnamen → SM single-Token-Match.
+    # DP hat "el mojahid" als nachname, SM schreibt nur "mojahid".
+    # → SM-Eintrag unter "mojahid" auf den DP-Key "el mojahid" remappen.
+    for nn_d in list(d_by_nn.keys()):
+        if " " in nn_d and nn_d not in s_by_nn:
+            last_d = nn_d.split()[-1]
+            if last_d in s_by_nn and last_d not in d_by_nn:
+                # SM hat nur letztes Token, DP hat den vollen Compound
+                for p in s_by_nn[last_d]:
+                    s_by_nn.setdefault(nn_d, []).append(p)
+                del s_by_nn[last_d]
 
     # Pre-resolve 2: Fuzzy-Matching für SM-Nachnamen ohne exakten DP-Treffer
     # (Tippfehler im Dienstplan, z.B. "Müler" statt "Müller").
