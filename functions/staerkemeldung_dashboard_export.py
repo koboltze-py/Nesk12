@@ -132,6 +132,11 @@ class StaerkemeldungDashboardExport:
             vn = m.get("vollname","").lower().strip()
             nachname = vn.split(",")[0].strip() if "," in vn else vn.split()[-1].lower() if vn else ""
             return vn in sl_namen or nachname in sl_namen
+        # Vollständige Dispo inkl. SL – wird nur für _find_sl benötigt
+        self._dispo_alle=sorted(
+            [m for m in dienstplan_data.get("dispo",[])
+             if id(m) not in kranke_ids],
+            key=lambda x: x.get("start_zeit") or "ZZZZ")
         self._dispo=sorted(
             [m for m in dienstplan_data.get("dispo",[])
              if id(m) not in kranke_ids
@@ -252,10 +257,13 @@ class StaerkemeldungDashboardExport:
             end  =(p.get("end_zeit")   or "")[:5]
             return f"{start}-{end}" if (start and end) else "?-?"
 
+        # Ungefilterte Dispo (inkl. SL-Person) verwenden
+        quelle = self._dispo_alle
+
         # Wenn ein Name angegeben ist: zuerst passende Person im Dienstplan suchen
         if manuell:
             manuell_lower = manuell.strip().lower()
-            for p in self._dispo:
+            for p in quelle:
                 dk=(p.get("dienst_kategorie") or "").upper()
                 if dk not in typen:
                     continue
@@ -266,14 +274,14 @@ class StaerkemeldungDashboardExport:
                         or manuell_lower in anzeige):
                     return manuell, _zeit(p)
             # Name nicht im Dienstplan gefunden → Zeit vom ersten Eintrag des Typs
-            for p in self._dispo:
+            for p in quelle:
                 dk=(p.get("dienst_kategorie") or "").upper()
                 if dk in typen:
                     return manuell, _zeit(p)
             return manuell, "?"
 
         # Kein Name angegeben → ersten passenden Eintrag verwenden
-        for p in self._dispo:
+        for p in quelle:
             dk=(p.get("dienst_kategorie") or "").upper()
             if dk in typen:
                 return "", _zeit(p)
