@@ -33,6 +33,38 @@ def _runde_auf_volle_stunde(zeit_str: Optional[str]) -> Optional[str]:
         return zeit_str
 
 
+# Dienst-Typen für bedingte Rundung
+_TAG_DISPO_TYPEN   = frozenset({'DT', 'DT3', 'D'})
+_NACHT_DISPO_TYPEN = frozenset({'DN', 'DN3'})
+
+
+def _runde_dispo_zeit_bedingt(zeit_str: Optional[str], dienst_kat: Optional[str], ist_start: bool) -> Optional[str]:
+    """
+    Rundet eine Dispo-Dienstzeit bedingt auf die volle Stunde:
+    - Tagdienst  (DT, DT3):  START runden wenn >= 07:00, END runden wenn >= 19:00
+    - Nachtdienst (DN, DN3): START runden wenn >= 19:00, END runden wenn >= 07:00
+    Liegt die Zeit VOR der Grenze (z.B. Frühheimgang), bleibt die exakte Zeit erhalten.
+    """
+    if not zeit_str or ':' not in zeit_str:
+        return zeit_str
+    try:
+        stunde = int(zeit_str.split(':')[0])
+    except Exception:
+        return zeit_str
+
+    if dienst_kat in _TAG_DISPO_TYPEN:
+        grenze = 7 if ist_start else 19
+    elif dienst_kat in _NACHT_DISPO_TYPEN:
+        grenze = 19 if ist_start else 7
+    else:
+        # Unbekannter Dispo-Typ: bedingungslos runden (Rückfall)
+        return f'{stunde:02d}:00'
+
+    if stunde >= grenze:
+        return f'{stunde:02d}:00'
+    return zeit_str  # Bedingung nicht erfüllt → exakte Zeit behalten
+
+
 def _betr_zu_dispo_kuerzel(kuerzel: str) -> str:
     """
     Wandelt ein Betreuer-Dienstkürzel in das entsprechende Dispo-Kürzel um.
@@ -155,10 +187,11 @@ class DienstplanParser:
                             # Betreuer-Kürzel → Dispo-Kürzel umwandeln
                             d = person.get('krank_abgeleiteter_dienst') or ''
                             person['krank_abgeleiteter_dienst'] = _betr_zu_dispo_kuerzel(d)
-                            # Anzeigezeiten auf volle Stunde abrunden
+                            # Anzeigezeiten bedingt auf volle Stunde abrunden
                             if self.round_dispo:
-                                person['start_zeit'] = _runde_auf_volle_stunde(person.get('start_zeit'))
-                                person['end_zeit']   = _runde_auf_volle_stunde(person.get('end_zeit'))
+                                kat = person.get('krank_abgeleiteter_dienst')
+                                person['start_zeit'] = _runde_dispo_zeit_bedingt(person.get('start_zeit'), kat, ist_start=True)
+                                person['end_zeit']   = _runde_dispo_zeit_bedingt(person.get('end_zeit'),   kat, ist_start=False)
 
                     alle_nachnamen.append(person['nachname'])
                     if person['ist_krank']:
@@ -365,15 +398,19 @@ class DienstplanParser:
                 dienst_kategorie = dienst_text
                 self.unbekannte_dienste.add(dienst_text)
 
-        # Zeiten
-        round_times = (dienst_kategorie in self.DISPO_KATEGORIEN if dienst_kategorie else False) and self.round_dispo
-        start_zeit  = None
-        end_zeit    = None
+        # Zeiten – zuerst ohne Rundung parsen, dann bedingt runden
+        ist_dispo_kat = (dienst_kategorie in self.DISPO_KATEGORIEN) if dienst_kategorie else False
+        start_zeit    = None
+        end_zeit      = None
 
         if self.column_map.get('beginn') is not None and len(cells) > self.column_map['beginn']:
-            start_zeit = self._parse_time(cells[self.column_map['beginn']], round_to_hour=round_times)
+            start_zeit = self._parse_time(cells[self.column_map['beginn']], round_to_hour=False)
+            if ist_dispo_kat and self.round_dispo:
+                start_zeit = _runde_dispo_zeit_bedingt(start_zeit, dienst_kategorie, ist_start=True)
         if self.column_map.get('ende') is not None and len(cells) > self.column_map['ende']:
-            end_zeit = self._parse_time(cells[self.column_map['ende']], round_to_hour=round_times)
+            end_zeit = self._parse_time(cells[self.column_map['ende']], round_to_hour=False)
+            if ist_dispo_kat and self.round_dispo:
+                end_zeit = _runde_dispo_zeit_bedingt(end_zeit, dienst_kategorie, ist_start=False)
 
         schicht_typ = self._ermittle_schichttyp(start_zeit, end_zeit)
 

@@ -18,6 +18,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from functions.dienstplan_parser import _runde_dispo_zeit_bedingt
 
 TEL   = "+49 2203 40-2323"
 MAIL  = "erste-hilfe-station-flughafen@drk-koeln.de"
@@ -75,8 +76,9 @@ def _zeit_key(p, ist_dispo=False):
     start=(p.get("start_zeit") or "")[:5]
     end  =(p.get("end_zeit")   or "")[:5]
     if ist_dispo and not p.get("manuell_geaendert"):
-        if start and ":" in start: start=f"{int(start.split(':')[0]):02d}:00"
-        if end   and ":" in end:   end  =f"{int(end.split(':')[0]):02d}:00"
+        kat   = p.get("dienst_kategorie")
+        start = _runde_dispo_zeit_bedingt(start, kat, ist_start=True)  or start
+        end   = _runde_dispo_zeit_bedingt(end,   kat, ist_start=False) or end
     return f"{start}-{end}" if (start and end) else "?-?"
 
 def _zeitgruppen(personen, ist_dispo=False):
@@ -130,6 +132,11 @@ class StaerkemeldungDashboardExport:
             vn = m.get("vollname","").lower().strip()
             nachname = vn.split(",")[0].strip() if "," in vn else vn.split()[-1].lower() if vn else ""
             return vn in sl_namen or nachname in sl_namen
+        # Vollständige Dispo inkl. SL – wird nur für _find_sl benötigt
+        self._dispo_alle=sorted(
+            [m for m in dienstplan_data.get("dispo",[])
+             if id(m) not in kranke_ids],
+            key=lambda x: x.get("start_zeit") or "ZZZZ")
         self._dispo=sorted(
             [m for m in dienstplan_data.get("dispo",[])
              if id(m) not in kranke_ids
@@ -244,18 +251,40 @@ class StaerkemeldungDashboardExport:
     def _find_sl(self,nacht):
         manuell=self._sl_nacht_name if nacht else self._sl_tag_name
         typen=_DISPO_NACHT_TYPEN if nacht else _DISPO_TAG_TYPEN
-        for p in self._dispo:
+
+        def _zeit(p):
+            start=(p.get("start_zeit") or "")[:5]
+            end  =(p.get("end_zeit")   or "")[:5]
+            return f"{start}-{end}" if (start and end) else "?-?"
+
+        # Ungefilterte Dispo (inkl. SL-Person) verwenden
+        quelle = self._dispo_alle
+
+        # Wenn ein Name angegeben ist: zuerst passende Person im Dienstplan suchen
+        if manuell:
+            manuell_lower = manuell.strip().lower()
+            for p in quelle:
+                dk=(p.get("dienst_kategorie") or "").upper()
+                if dk not in typen:
+                    continue
+                vollname = (p.get("vollname") or "").lower()
+                nachname = (p.get("nachname") or "").lower()
+                anzeige  = (p.get("anzeigename") or "").lower()
+                if (manuell_lower in vollname or manuell_lower in nachname
+                        or manuell_lower in anzeige):
+                    return manuell, _zeit(p)
+            # Name nicht im Dienstplan gefunden → Zeit vom ersten Eintrag des Typs
+            for p in quelle:
+                dk=(p.get("dienst_kategorie") or "").upper()
+                if dk in typen:
+                    return manuell, _zeit(p)
+            return manuell, "?"
+
+        # Kein Name angegeben → ersten passenden Eintrag verwenden
+        for p in quelle:
             dk=(p.get("dienst_kategorie") or "").upper()
             if dk in typen:
-                start=(p.get("start_zeit") or "")[:5]
-                end  =(p.get("end_zeit")   or "")[:5]
-                zeit =f"{start}-{end}" if (start and end) else "?-?"
-                # Name nur ausgeben wenn manuell eingegeben, sonst leer lassen
-                return manuell, zeit
-        # Kein Dispo-Eintrag gefunden
-        if manuell:
-            return manuell, "?"
-        # Kein Eintrag und kein Name → Zeile trotzdem zeigen, aber leer
+                return "", _zeit(p)
         return "", ""
 
     def _build_links(self,lc):
