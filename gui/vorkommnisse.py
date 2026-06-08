@@ -1002,7 +1002,8 @@ class VorkommnisseWidget(QWidget):
         if kandidat_pfad.exists():
             return str(kandidat_pfad)
         # Breiteren Scan: irgendeine .docx mit dem Flugnamen
-        alle = glob.glob(str(basis / "**" / f"*{sicher_flug}*.docx"), recursive=True)
+        alle = [p for p in glob.glob(str(basis / "**" / f"*{sicher_flug}*.docx"), recursive=True)
+                if os.path.isfile(p)]  # OneDrive-Placeholder überspringen
         if alle:
             # Neueste nehmen
             return max(alle, key=os.path.getmtime)
@@ -1027,6 +1028,13 @@ class VorkommnisseWidget(QWidget):
     def _email_entwurf_dialog(self):
         """Zeigt Dialog zum Erstellen einer E-Mail mit optionalem Anhang.
         Die passende Word-Datei wird automatisch gefunden oder exportiert."""
+        try:
+            self._email_entwurf_dialog_intern()
+        except Exception as _exc:
+            import traceback
+            QMessageBox.critical(self, "Fehler in E-Mail-Dialog", traceback.format_exc())
+
+    def _email_entwurf_dialog_intern(self):
         from PySide6.QtWidgets import (
             QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit,
             QTextEdit, QListWidget, QListWidgetItem, QDialogButtonBox,
@@ -1127,7 +1135,8 @@ class VorkommnisseWidget(QWidget):
 
         basis = self._berichte_basis_dir()
         docx_dateien = sorted(
-            glob.glob(str(basis / "**" / "*.docx"), recursive=True),
+            [p for p in glob.glob(str(basis / "**" / "*.docx"), recursive=True)
+             if os.path.isfile(p)],  # OneDrive-Placeholder überspringen
             key=os.path.getmtime, reverse=True
         )
         vorsel_item = None
