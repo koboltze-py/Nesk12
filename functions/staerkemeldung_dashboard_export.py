@@ -18,6 +18,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from functions.dienstplan_parser import _runde_dispo_zeit_bedingt
 
 TEL   = "+49 2203 40-2323"
 MAIL  = "erste-hilfe-station-flughafen@drk-koeln.de"
@@ -75,8 +76,9 @@ def _zeit_key(p, ist_dispo=False):
     start=(p.get("start_zeit") or "")[:5]
     end  =(p.get("end_zeit")   or "")[:5]
     if ist_dispo and not p.get("manuell_geaendert"):
-        if start and ":" in start: start=f"{int(start.split(':')[0]):02d}:00"
-        if end   and ":" in end:   end  =f"{int(end.split(':')[0]):02d}:00"
+        kat   = p.get("dienst_kategorie")
+        start = _runde_dispo_zeit_bedingt(start, kat, ist_start=True)  or start
+        end   = _runde_dispo_zeit_bedingt(end,   kat, ist_start=False) or end
     return f"{start}-{end}" if (start and end) else "?-?"
 
 def _zeitgruppen(personen, ist_dispo=False):

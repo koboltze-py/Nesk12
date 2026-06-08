@@ -15,6 +15,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from functions.dienstplan_parser import _runde_dispo_zeit_bedingt
 
 # Logo-Pfad relativ zum Projekt-Stammverzeichnis
 _BASE_DIR  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -212,12 +213,11 @@ class StaerkemeldungExport:
             start = (person.get('start_zeit') or '')[:5]
             end   = (person.get('end_zeit')   or '')[:5]
 
-            # Dispo: Minuten abschneiden – außer wenn der Nutzer die Zeit manuell angepasst hat
+            # Dispo: Minuten bedingt abschneiden – außer wenn der Nutzer die Zeit manuell angepasst hat
             if ist_dispo and not person.get('manuell_geaendert'):
-                if start and ':' in start:
-                    start = f"{int(start.split(':')[0]):02d}:00"
-                if end and ':' in end:
-                    end = f"{int(end.split(':')[0]):02d}:00"
+                kat   = person.get('dienst_kategorie')
+                start = _runde_dispo_zeit_bedingt(start, kat, ist_start=True)  or start
+                end   = _runde_dispo_zeit_bedingt(end,   kat, ist_start=False) or end
 
             # Spezialfall NF 16:00–04:00
             if start == '16:00' and end in ('04:00', '04'):

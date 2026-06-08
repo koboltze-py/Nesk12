@@ -949,6 +949,21 @@ class VorkommnisseWidget(QWidget):
         """Basisordner für alle Vorkommnis-Berichte."""
         return Path(BASE_DIR) / "Daten" / "Vorkommnis Berichte"
 
+    def _vk_dateiname(self, flug: str, datum_kurz: str) -> str:
+        """Erstellt einen sicheren Dateinamen für Vorkommnisberichte.
+        Kürzt den Flugnamen wenn der Gesamtpfad das Windows MAX_PATH (260) überschreiten würde."""
+        sicher_flug = flug.replace("/", "-").replace(" ", "_")
+        suffix = f"_{datum_kurz}.docx" if datum_kurz else ".docx"
+        prefix = "Vorkommnisbericht_"
+        # Reservierte Länge: Basispfad + Separator + Monatsordner (max ~18 Zeichen) + Separator
+        basis_len = len(str(self._berichte_basis_dir())) + 1 + 18 + 1
+        max_flug = 259 - basis_len - len(prefix) - len(suffix)
+        if max_flug < 10:
+            max_flug = 10
+        if len(sicher_flug) > max_flug:
+            sicher_flug = sicher_flug[:max_flug]
+        return f"{prefix}{sicher_flug}{suffix}"
+
     def _monats_dir(self, datum: str) -> Path:
         """Gibt den Monatsordner zurück und legt ihn bei Bedarf an.
         datum erwartet Format 'dd.MM.yyyy'."""
@@ -982,7 +997,7 @@ class VorkommnisseWidget(QWidget):
         except Exception:
             datum_kurz = ""
         # Exakter Dateiname wie beim Export (mit Datum)
-        kandidat_name = f"Vorkommnisbericht_{sicher_flug}_{datum_kurz}.docx" if datum_kurz else f"Vorkommnisbericht_{sicher_flug}.docx"
+        kandidat_name = self._vk_dateiname(flug, datum_kurz)
         kandidat_pfad = self._monats_dir(datum) / kandidat_name
         if kandidat_pfad.exists():
             return str(kandidat_pfad)
@@ -996,12 +1011,11 @@ class VorkommnisseWidget(QWidget):
     def _exportiere_word_automatisch(self, daten: dict) -> "str | None":
         """Erstellt die Word-Datei ohne Dialog und gibt den Pfad zurück."""
         from datetime import datetime as _dt
-        flug = daten.get("flug", "").replace("/", "-").replace(" ", "_")
         try:
             datum_kurz = _dt.strptime(daten.get("datum", ""), "%d.%m.%Y").strftime("%d-%m-%Y")
         except Exception:
             datum_kurz = ""
-        default_name = f"Vorkommnisbericht_{flug}_{datum_kurz}.docx" if datum_kurz else f"Vorkommnisbericht_{flug}.docx"
+        default_name = self._vk_dateiname(daten.get("flug", ""), datum_kurz)
         pfad = str(self._monats_dir(daten["datum"]) / default_name)
         try:
             self._erstelle_word(pfad, daten)
@@ -1202,8 +1216,7 @@ class VorkommnisseWidget(QWidget):
             datum_kurz = _dt.strptime(daten["datum"], "%d.%m.%Y").strftime("%d-%m-%Y")
         except Exception:
             datum_kurz = ""
-        flug_sicher = daten['flug'].replace('/', '-').replace(' ', '_')
-        default_name = f"Vorkommnisbericht_{flug_sicher}_{datum_kurz}.docx" if datum_kurz else f"Vorkommnisbericht_{flug_sicher}.docx"
+        default_name = self._vk_dateiname(daten['flug'], datum_kurz)
         # Monatsordner basierend auf dem Datum des Vorkommnisses
         speicher_dir = self._monats_dir(daten["datum"])
         pfad, _ = QFileDialog.getSaveFileName(

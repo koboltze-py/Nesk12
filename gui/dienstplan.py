@@ -821,12 +821,14 @@ class _DispoZeitenVorschauDialog(QDialog):
             self._orig_zeiten[('betreuer', i)] = (
                 p.get('start_zeit') or '–', p.get('end_zeit') or '–'
             )
-        # Dispo-Zeiten vorab auf volle Stunden runden (so wie der Word-Exporter es tut)
+        # Dispo-Zeiten vorab bedingt auf volle Stunden runden (so wie der Word-Exporter es tut)
+        from functions.dienstplan_parser import _runde_dispo_zeit_bedingt
         for p in self._data.get('dispo', []):
-            for key in ('start_zeit', 'end_zeit'):
-                t = p.get(key) or ''
-                if t and ':' in t:
-                    p[key] = f"{int(t.split(':')[0]):02d}:00"
+            kat = p.get('dienst_kategorie')
+            if p.get('start_zeit'):
+                p['start_zeit'] = _runde_dispo_zeit_bedingt(p['start_zeit'], kat, ist_start=True)  or p['start_zeit']
+            if p.get('end_zeit'):
+                p['end_zeit']   = _runde_dispo_zeit_bedingt(p['end_zeit'],   kat, ist_start=False) or p['end_zeit']
         self._row_to_person: list[tuple[str, int]] = []
         self._build_ui()
 
