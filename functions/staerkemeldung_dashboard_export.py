@@ -246,18 +246,37 @@ class StaerkemeldungDashboardExport:
     def _find_sl(self,nacht):
         manuell=self._sl_nacht_name if nacht else self._sl_tag_name
         typen=_DISPO_NACHT_TYPEN if nacht else _DISPO_TAG_TYPEN
+
+        def _zeit(p):
+            start=(p.get("start_zeit") or "")[:5]
+            end  =(p.get("end_zeit")   or "")[:5]
+            return f"{start}-{end}" if (start and end) else "?-?"
+
+        # Wenn ein Name angegeben ist: zuerst passende Person im Dienstplan suchen
+        if manuell:
+            manuell_lower = manuell.strip().lower()
+            for p in self._dispo:
+                dk=(p.get("dienst_kategorie") or "").upper()
+                if dk not in typen:
+                    continue
+                vollname = (p.get("vollname") or "").lower()
+                nachname = (p.get("nachname") or "").lower()
+                anzeige  = (p.get("anzeigename") or "").lower()
+                if (manuell_lower in vollname or manuell_lower in nachname
+                        or manuell_lower in anzeige):
+                    return manuell, _zeit(p)
+            # Name nicht im Dienstplan gefunden → Zeit vom ersten Eintrag des Typs
+            for p in self._dispo:
+                dk=(p.get("dienst_kategorie") or "").upper()
+                if dk in typen:
+                    return manuell, _zeit(p)
+            return manuell, "?"
+
+        # Kein Name angegeben → ersten passenden Eintrag verwenden
         for p in self._dispo:
             dk=(p.get("dienst_kategorie") or "").upper()
             if dk in typen:
-                start=(p.get("start_zeit") or "")[:5]
-                end  =(p.get("end_zeit")   or "")[:5]
-                zeit =f"{start}-{end}" if (start and end) else "?-?"
-                # Name nur ausgeben wenn manuell eingegeben, sonst leer lassen
-                return manuell, zeit
-        # Kein Dispo-Eintrag gefunden
-        if manuell:
-            return manuell, "?"
-        # Kein Eintrag und kein Name → Zeile trotzdem zeigen, aber leer
+                return "", _zeit(p)
         return "", ""
 
     def _build_links(self,lc):
