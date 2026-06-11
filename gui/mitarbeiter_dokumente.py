@@ -1853,6 +1853,7 @@ class MitarbeiterDokumenteWidget(QWidget):
         self._kat_list.addItem(_sep)
         self._kat_list.addItem("🦺  PSA")
         self._kat_list.addItem("🖨️  Ausdrucke")
+        self._kat_list.addItem("📋  Laufzettel")
         self._kat_list.setCurrentRow(0)
         self._kat_list.currentRowChanged.connect(self._kategorie_gewaehlt)
         layout.addWidget(self._kat_list, 1)
@@ -1924,6 +1925,12 @@ class MitarbeiterDokumenteWidget(QWidget):
         self._btn_schulung.setVisible(False)
         self._btn_schulung.clicked.connect(self._schulung_tab_oeffnen)
         btn_row.addWidget(self._btn_schulung)
+
+        self._btn_laufzettel = _btn("📋  Laufzettel erstellen", "#5c35cc", "#4a2aa0")
+        self._btn_laufzettel.setToolTip("Laufzettel (Onboarding-Checkliste) als Word-Dokument erstellen")
+        self._btn_laufzettel.setVisible(False)
+        self._btn_laufzettel.clicked.connect(self._laufzettel_dialog_oeffnen)
+        btn_row.addWidget(self._btn_laufzettel)
 
         btn_row.addStretch()
         outer.addLayout(btn_row)
@@ -3498,6 +3505,8 @@ class MitarbeiterDokumenteWidget(QWidget):
             self._zeige_sonderkategorie(4, "🦺  PSA")
         elif row == len(KATEGORIEN) + 2:  # Ausdrucke
             self._zeige_sonderkategorie(5, "🖨️  Ausdrucke")
+        elif row == len(KATEGORIEN) + 3:  # Laufzettel
+            self._zeige_laufzettel_kategorie()
 
     def _zeige_sonderkategorie(self, tab_index: int, titel: str):
         """Sonderkategorie: DokumentBrowser direkt im rechten Bereich zeigen."""
@@ -3509,12 +3518,29 @@ class MitarbeiterDokumenteWidget(QWidget):
         self._btn_psa.setVisible(False)
         self._btn_schulung.setVisible(False)
         self._btn_word_druck.setVisible(False)
+        self._btn_laufzettel.setVisible(False)
         self._antraege_panel.setVisible(False)
         self._datei_filter_frame.setVisible(False)
         for i in range(7):
             self._tabs.setTabVisible(i, False)
         self._tabs.setTabVisible(tab_index, True)
         self._tabs.setCurrentIndex(tab_index)
+
+    def _zeige_laufzettel_kategorie(self):
+        """Laufzettel-Kategorie: Button anzeigen, alle anderen Elemente ausblenden."""
+        self._kat_label.setText("📋  Laufzettel")
+        self._btn_neu.setVisible(False)
+        self._btn_stellungnahme.setVisible(False)
+        self._btn_web.setVisible(False)
+        self._btn_verspaetung.setVisible(False)
+        self._btn_psa.setVisible(False)
+        self._btn_schulung.setVisible(False)
+        self._btn_word_druck.setVisible(False)
+        self._btn_laufzettel.setVisible(True)
+        self._antraege_panel.setVisible(False)
+        self._datei_filter_frame.setVisible(False)
+        for i in range(7):
+            self._tabs.setTabVisible(i, False)
 
     def _auswahl_geaendert(self):
         pass  # Öffnen/Bearbeiten/Umbenennen/Löschen nur über Rechtsklick-Menü
@@ -3527,6 +3553,12 @@ class MitarbeiterDokumenteWidget(QWidget):
         return None
 
     # ── Aktionen ──────────────────────────────────────────────────────────────
+
+    def _laufzettel_dialog_oeffnen(self):
+        """Öffnet den Laufzettel-Dialog."""
+        from gui.laufzettel_dialog import LaufzettelDialog
+        dlg = LaufzettelDialog(self)
+        dlg.exec()
 
     def _ordner_oeffnen(self):
         import subprocess
