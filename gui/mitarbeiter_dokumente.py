@@ -1925,6 +1925,12 @@ class MitarbeiterDokumenteWidget(QWidget):
         self._btn_schulung.clicked.connect(self._schulung_tab_oeffnen)
         btn_row.addWidget(self._btn_schulung)
 
+        self._btn_laufzettel = _btn("📋  Laufzettel erstellen", "#5c35cc", "#4a2aa0")
+        self._btn_laufzettel.setToolTip("Laufzettel (Onboarding-Checkliste) als Word-Dokument erstellen")
+        self._btn_laufzettel.setVisible(False)
+        self._btn_laufzettel.clicked.connect(self._laufzettel_dialog_oeffnen)
+        btn_row.addWidget(self._btn_laufzettel)
+
         btn_row.addStretch()
         outer.addLayout(btn_row)
 
@@ -3497,9 +3503,9 @@ class MitarbeiterDokumenteWidget(QWidget):
         elif row == len(KATEGORIEN) + 1:  # PSA (nach Trennlinie)
             self._zeige_sonderkategorie(4, "🦺  PSA")
         elif row == len(KATEGORIEN) + 2:  # Ausdrucke
-            self._zeige_sonderkategorie(5, "🖨️  Ausdrucke")
+            self._zeige_sonderkategorie(5, "🖨️  Ausdrucke", zeige_laufzettel=True)
 
-    def _zeige_sonderkategorie(self, tab_index: int, titel: str):
+    def _zeige_sonderkategorie(self, tab_index: int, titel: str, zeige_laufzettel: bool = False):
         """Sonderkategorie: DokumentBrowser direkt im rechten Bereich zeigen."""
         self._kat_label.setText(titel)
         self._btn_neu.setVisible(False)
@@ -3509,6 +3515,7 @@ class MitarbeiterDokumenteWidget(QWidget):
         self._btn_psa.setVisible(False)
         self._btn_schulung.setVisible(False)
         self._btn_word_druck.setVisible(False)
+        self._btn_laufzettel.setVisible(zeige_laufzettel)
         self._antraege_panel.setVisible(False)
         self._datei_filter_frame.setVisible(False)
         for i in range(7):
@@ -3527,6 +3534,12 @@ class MitarbeiterDokumenteWidget(QWidget):
         return None
 
     # ── Aktionen ──────────────────────────────────────────────────────────────
+
+    def _laufzettel_dialog_oeffnen(self):
+        """Öffnet den Laufzettel-Dialog."""
+        from gui.laufzettel_dialog import LaufzettelDialog
+        dlg = LaufzettelDialog(self)
+        dlg.exec()
 
     def _ordner_oeffnen(self):
         import subprocess
