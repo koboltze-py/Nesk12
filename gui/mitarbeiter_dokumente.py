@@ -1853,6 +1853,7 @@ class MitarbeiterDokumenteWidget(QWidget):
         self._kat_list.addItem(_sep)
         self._kat_list.addItem("🦺  PSA")
         self._kat_list.addItem("🖨️  Ausdrucke")
+        self._kat_list.addItem("📋  Laufzettel")
         self._kat_list.setCurrentRow(0)
         self._kat_list.currentRowChanged.connect(self._kategorie_gewaehlt)
         layout.addWidget(self._kat_list, 1)
@@ -3503,9 +3504,11 @@ class MitarbeiterDokumenteWidget(QWidget):
         elif row == len(KATEGORIEN) + 1:  # PSA (nach Trennlinie)
             self._zeige_sonderkategorie(4, "🦺  PSA")
         elif row == len(KATEGORIEN) + 2:  # Ausdrucke
-            self._zeige_sonderkategorie(5, "🖨️  Ausdrucke", zeige_laufzettel=True)
+            self._zeige_sonderkategorie(5, "🖨️  Ausdrucke")
+        elif row == len(KATEGORIEN) + 3:  # Laufzettel
+            self._zeige_laufzettel_kategorie()
 
-    def _zeige_sonderkategorie(self, tab_index: int, titel: str, zeige_laufzettel: bool = False):
+    def _zeige_sonderkategorie(self, tab_index: int, titel: str):
         """Sonderkategorie: DokumentBrowser direkt im rechten Bereich zeigen."""
         self._kat_label.setText(titel)
         self._btn_neu.setVisible(False)
@@ -3515,13 +3518,29 @@ class MitarbeiterDokumenteWidget(QWidget):
         self._btn_psa.setVisible(False)
         self._btn_schulung.setVisible(False)
         self._btn_word_druck.setVisible(False)
-        self._btn_laufzettel.setVisible(zeige_laufzettel)
+        self._btn_laufzettel.setVisible(False)
         self._antraege_panel.setVisible(False)
         self._datei_filter_frame.setVisible(False)
         for i in range(7):
             self._tabs.setTabVisible(i, False)
         self._tabs.setTabVisible(tab_index, True)
         self._tabs.setCurrentIndex(tab_index)
+
+    def _zeige_laufzettel_kategorie(self):
+        """Laufzettel-Kategorie: Button anzeigen, alle anderen Elemente ausblenden."""
+        self._kat_label.setText("📋  Laufzettel")
+        self._btn_neu.setVisible(False)
+        self._btn_stellungnahme.setVisible(False)
+        self._btn_web.setVisible(False)
+        self._btn_verspaetung.setVisible(False)
+        self._btn_psa.setVisible(False)
+        self._btn_schulung.setVisible(False)
+        self._btn_word_druck.setVisible(False)
+        self._btn_laufzettel.setVisible(True)
+        self._antraege_panel.setVisible(False)
+        self._datei_filter_frame.setVisible(False)
+        for i in range(7):
+            self._tabs.setTabVisible(i, False)
 
     def _auswahl_geaendert(self):
         pass  # Öffnen/Bearbeiten/Umbenennen/Löschen nur über Rechtsklick-Menü
