@@ -153,6 +153,16 @@ class SplashScreen(QWidget):
         p.setPen(QPen(QBrush(sh_grad), 0))
         p.drawText(QPointF(tx, ty), text)
 
+        # ── "NewSkies" – Klein-Schriftzug unter NeSk ─────────────────────
+        font_ns = QFont("Segoe UI", 9, QFont.Weight.Light)
+        font_ns.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
+        p.setFont(font_ns)
+        fm_ns = QFontMetricsF(font_ns)
+        ns_text = "NewSkies"
+        ns_w    = fm_ns.horizontalAdvance(ns_text)
+        p.setPen(QPen(QColor(130, 165, 190, 170)))
+        p.drawText(QPointF(cx - ns_w / 2, ty + 17), ns_text)
+
         # ── Untertitel ────────────────────────────────────────────────────
         font_sub = QFont("Segoe UI", 9)
         p.setFont(font_sub)
@@ -160,7 +170,7 @@ class SplashScreen(QWidget):
         sub  = "DRK  \u00b7  Flughafen K\u00f6ln / Bonn"
         sw   = fm_s.horizontalAdvance(sub)
         p.setPen(QPen(_ACCENT))
-        p.drawText(QPointF(cx - sw / 2, ty + 24), sub)
+        p.drawText(QPointF(cx - sw / 2, ty + 36), sub)
 
         if self._version:
             fv = QFont("Segoe UI", 8)
@@ -169,7 +179,7 @@ class SplashScreen(QWidget):
             vt  = f"v{self._version}"
             vw  = fmv.horizontalAdvance(vt)
             p.setPen(QPen(_GRAY))
-            p.drawText(QPointF(cx - vw / 2, ty + 40), vt)
+            p.drawText(QPointF(cx - vw / 2, ty + 52), vt)
 
         # ── Trennlinie + Status ───────────────────────────────────────────
         sep_y = H - 40
