@@ -56,6 +56,7 @@ def _init_db() -> None:
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             flug             TEXT    NOT NULL DEFAULT '',
             typ              TEXT    NOT NULL DEFAULT '',
+            bereich          TEXT    NOT NULL DEFAULT '',
             datum            TEXT    NOT NULL DEFAULT '',
             ort              TEXT    NOT NULL DEFAULT '',
             offblock_plan    TEXT    NOT NULL DEFAULT '',
@@ -70,6 +71,10 @@ def _init_db() -> None:
             geaendert_am     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
         );
         """)
+        # Migration: bereich-Spalte für bestehende Datenbanken hinzufügen
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(vorkommnisse)").fetchall()]
+        if "bereich" not in cols:
+            conn.execute("ALTER TABLE vorkommnisse ADD COLUMN bereich TEXT NOT NULL DEFAULT ''")
 
 
 _init_db()
@@ -86,14 +91,15 @@ def speichern(daten: dict) -> int:
     with _connect() as conn:
         cur = conn.execute(
             """INSERT INTO vorkommnisse
-               (flug, typ, datum, ort, offblock_plan, offblock_ist,
+               (flug, typ, bereich, datum, ort, offblock_plan, offblock_ist,
                 erstellt_von, ursache, ergebnis,
                 passagiere_json, personal_json, chronologie_json,
                 erstellt_am, geaendert_am)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 daten.get("flug", ""),
                 daten.get("typ", ""),
+                daten.get("bereich", ""),
                 daten.get("datum", ""),
                 daten.get("ort", ""),
                 daten.get("offblock_plan", ""),
@@ -119,7 +125,7 @@ def aktualisieren(vorkommnis_id: int, daten: dict) -> None:
     with _connect() as conn:
         conn.execute(
             """UPDATE vorkommnisse SET
-               flug=?, typ=?, datum=?, ort=?,
+               flug=?, typ=?, bereich=?, datum=?, ort=?,
                offblock_plan=?, offblock_ist=?,
                erstellt_von=?, ursache=?, ergebnis=?,
                passagiere_json=?, personal_json=?, chronologie_json=?,
@@ -128,6 +134,7 @@ def aktualisieren(vorkommnis_id: int, daten: dict) -> None:
             (
                 daten.get("flug", ""),
                 daten.get("typ", ""),
+                daten.get("bereich", ""),
                 daten.get("datum", ""),
                 daten.get("ort", ""),
                 daten.get("offblock_plan", ""),

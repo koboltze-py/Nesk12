@@ -36,6 +36,26 @@ VORKOMMNIS_TYPEN = [
     "Sonstiges",
 ]
 
+# ── Bereich-Optionen (feingranulare Kategorie) ─────────────────────────────────
+BEREICH_OPTIONEN = [
+    "Flüge",
+    "Fahrzeuge",
+    "Personal",
+    "Sachschäden",
+    "Infrastruktur",
+    "Sonstiges",
+]
+
+# ── Bereich → Bezeichnungs-Label (Formular & Word) ────────────────────────────
+_BEREICH_LABEL: dict[str, str] = {
+    "Flüge":        "Flugnummer:",
+    "Fahrzeuge":    "Fahrzeug / Kennzeichen:",
+    "Personal":     "Name / Dienstnummer:",
+    "Sachschäden":  "Bezeichnung:",
+    "Infrastruktur":"Bereich / Bezeichnung:",
+    "Sonstiges":    "Bezeichnung:",
+}
+
 # ── PRM-Kategorien (IATA) ──────────────────────────────────────────────────────
 PRM_KATEGORIEN = [
     "WCHS", "WCHR", "WCHC", "BLND", "DEAF", "DPNA",
@@ -599,9 +619,9 @@ class VorkommnisseWidget(QWidget):
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
-        self._liste_table = QTableWidget(0, 6)
+        self._liste_table = QTableWidget(0, 7)
         self._liste_table.setHorizontalHeaderLabels(
-            ["ID", "Flug", "Typ", "Datum", "Ort", "Erstellt von"]
+            ["ID", "Flug/Ref.", "Typ", "Bereich", "Datum", "Ort", "Erstellt von"]
         )
         self._liste_table.setStyleSheet(_TABLE_STYLE)
         self._liste_table.setSelectionBehavior(
@@ -615,8 +635,9 @@ class VorkommnisseWidget(QWidget):
         self._liste_table.setColumnWidth(0, 45)
         self._liste_table.setColumnWidth(1, 90)
         self._liste_table.setColumnWidth(2, 160)
-        self._liste_table.setColumnWidth(3, 100)
-        self._liste_table.setColumnWidth(4, 160)
+        self._liste_table.setColumnWidth(3, 110)
+        self._liste_table.setColumnWidth(4, 100)
+        self._liste_table.setColumnWidth(5, 140)
         self._liste_table.doubleClicked.connect(self._laden_aus_liste)
         self._liste_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._liste_table.customContextMenuRequested.connect(
@@ -655,11 +676,22 @@ class VorkommnisseWidget(QWidget):
         self._flug_edit.setPlaceholderText("z. B. XQ983 / PRM-Betreuung")
         self._flug_edit.setStyleSheet(style)
         layout.addRow("Flugnummer / Vorkommnis:", self._flug_edit)
+        # Label-Referenz für dynamische Aktualisierung
+        self._flug_lbl = layout.labelForField(self._flug_edit)
 
         self._typ_combo = QComboBox()
         self._typ_combo.addItems(VORKOMMNIS_TYPEN)
         self._typ_combo.setStyleSheet(style)
         layout.addRow("Vorkommnis-Typ:", self._typ_combo)
+
+        self._bereich_combo = QComboBox()
+        self._bereich_combo.addItems(BEREICH_OPTIONEN)
+        self._bereich_combo.setStyleSheet(style)
+        self._bereich_combo.setToolTip(
+            "Kategorie des Vorkommnisses – wird im Word-Bericht verwendet"
+        )
+        layout.addRow("Bereich:", self._bereich_combo)
+        self._bereich_combo.currentTextChanged.connect(self._on_bereich_changed)
 
         self._datum_edit = QDateEdit(QDate.currentDate())
         self._datum_edit.setDisplayFormat("dd.MM.yyyy")
@@ -712,15 +744,15 @@ class VorkommnisseWidget(QWidget):
     def _speichern(self):
         from functions.vorkommnisse_db import speichern, aktualisieren
         daten = self._sammle_daten()
-        if not daten["flug"]:
-            QMessageBox.warning(self, "Fehler", "Bitte Flugnummer eingeben.")
+        if not daten["flug"] and not daten["bereich"]:
+            QMessageBox.warning(self, "Fehler", "Bitte Bezeichnung / Flugnummer eingeben.")
             return
         try:
             if self._current_id is None:
                 self._current_id = speichern(daten)
                 QMessageBox.information(
                     self, "Gespeichert",
-                    f"Vorkommnis Flug {daten['flug']} wurde gespeichert."
+                    f"Vorkommnis »{daten['flug'] or daten['bereich']}« wurde gespeichert."
                 )
             else:
                 aktualisieren(self._current_id, daten)
@@ -829,7 +861,7 @@ class VorkommnisseWidget(QWidget):
             r = self._liste_table.rowCount()
             self._liste_table.insertRow(r)
             for col, val in enumerate([
-                str(d["id"]), d["flug"], d["typ"],
+                str(d["id"]), d["flug"], d["typ"], d.get("bereich", ""),
                 d["datum"], d["ort"], d["erstellt_von"],
             ]):
                 item = QTableWidgetItem(val)
@@ -854,11 +886,18 @@ class VorkommnisseWidget(QWidget):
         if idx == 1:
             self._aktualisiere_liste()
 
+    def _on_bereich_changed(self, bereich: str):
+        """Passt den Label-Text des Flug/Referenz-Feldes an den Bereich an."""
+        lbl = _BEREICH_LABEL.get(bereich, "Bezeichnung / Flugnummer:")
+        if self._flug_lbl:
+            self._flug_lbl.setText(lbl)
+
     # ── Formular-Helfer ────────────────────────────────────────────────────────
 
     def _formular_leeren(self):
         self._flug_edit.clear()
         self._typ_combo.setCurrentIndex(0)
+        self._bereich_combo.setCurrentIndex(0)
         self._datum_edit.setDate(QDate.currentDate())
         self._ort_edit.clear()
         self._offblock_plan_chk.setChecked(False)
@@ -877,6 +916,9 @@ class VorkommnisseWidget(QWidget):
         idx = self._typ_combo.findText(d.get("typ", ""))
         if idx >= 0:
             self._typ_combo.setCurrentIndex(idx)
+        b_idx = self._bereich_combo.findText(d.get("bereich", ""))
+        if b_idx >= 0:
+            self._bereich_combo.setCurrentIndex(b_idx)
         qdate = QDate.fromString(d.get("datum", ""), "dd.MM.yyyy")
         if qdate.isValid():
             self._datum_edit.setDate(qdate)
@@ -931,6 +973,7 @@ class VorkommnisseWidget(QWidget):
         return {
             "flug":          self._flug_edit.text().strip(),
             "typ":           self._typ_combo.currentText(),
+            "bereich":       self._bereich_combo.currentText(),
             "datum":         self._datum_edit.date().toString("dd.MM.yyyy"),
             "ort":           self._ort_edit.text().strip(),
             "offblock_plan": offblock_plan_str,
@@ -1044,15 +1087,16 @@ class VorkommnisseWidget(QWidget):
         import glob
 
         daten = self._sammle_daten()
-        flug  = daten.get("flug", "").strip()
-        datum = daten.get("datum", "").strip()
+        flug    = daten.get("flug", "").strip()
+        datum   = daten.get("datum", "").strip()
+        _ref_id = flug or daten.get("bereich", "")  # Fallback auf Bereich
 
         # ── Passende Word-Datei automatisch ermitteln oder erstellen ──────────
         vorselektierter_pfad = self._ermittle_word_pfad(flug, datum)
-        if not vorselektierter_pfad and flug:
+        if not vorselektierter_pfad and _ref_id:
             antwort = QMessageBox.question(
                 self, "Kein Bericht gefunden",
-                f"Für den Bericht »{flug}« wurde keine Word-Datei gefunden.\n"
+                f"Für den Bericht »{_ref_id}« wurde keine Word-Datei gefunden.\n"
                 "Soll die Datei jetzt automatisch erstellt und angehängt werden?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
@@ -1097,8 +1141,17 @@ class VorkommnisseWidget(QWidget):
 
         def _aktualisiere():
             d = datum_edit.date().toString("dd.MM.yyyy")
+            _bereich = daten.get("bereich", "")
+            if _bereich == "Flüge":
+                _ref_text = f"Flug {flug}" if flug else ""
+            elif _bereich == "Fahrzeuge":
+                _ref_text = f"Fahrzeug {flug}" if flug else ""
+            elif _bereich:
+                _ref_text = f"{_bereich} – {flug}" if flug else _bereich
+            else:
+                _ref_text = f"Flug {flug}" if flug else ""
             betreff_edit.setText(
-                f"Vorkommnisbericht – Flug {flug} – {d}" if flug
+                f"Vorkommnisbericht – {_ref_text} – {d}" if _ref_text
                 else f"Vorkommnisbericht – {d}"
             )
             name = name_edit.text().strip()
@@ -1106,7 +1159,7 @@ class VorkommnisseWidget(QWidget):
             text_edit.setPlainText(
                 "Hallo Lars,\n\n"
                 "anbei der Vorkommnisbericht"
-                + (f" zu Flug {flug}" if flug else "")
+                + (f" zu {_ref_text}" if _ref_text else "")
                 + f" vom {d}"
                 + ".\n\nBei Fragen meld dich gerne.\n\n"
                 "Viele Grüße"
@@ -1176,7 +1229,7 @@ class VorkommnisseWidget(QWidget):
             # Vorfall automatisch speichern, falls noch nicht gespeichert
             if self._current_id is None:
                 _daten = self._sammle_daten()
-                if _daten.get("flug"):
+                if _daten.get("flug") or _daten.get("bereich"):
                     try:
                         from functions.vorkommnisse_db import speichern as _vk_speichern
                         self._current_id = _vk_speichern(_daten)
@@ -1216,8 +1269,8 @@ class VorkommnisseWidget(QWidget):
 
     def _export_word(self):
         daten = self._sammle_daten()
-        if not daten["flug"]:
-            QMessageBox.warning(self, "Fehler", "Bitte Flugnummer eingeben.")
+        if not daten["flug"] and not daten["bereich"]:
+            QMessageBox.warning(self, "Fehler", "Bitte Bezeichnung / Flugnummer eingeben.")
             return
 
         try:
@@ -1272,16 +1325,35 @@ class VorkommnisseWidget(QWidget):
         self._baue_kopfzeile(doc)
 
         # ── Titel ─────────────────────────────────────────────────────────────
+        # Bereichs-abhängiger Bezug (kein hartes "Flug" mehr)
+        _bereich = d.get("bereich", "")
+        _ref     = d.get("flug", "")
+        if _bereich == "Flüge":
+            _bezug = f"Flug {_ref}" if _ref else "Flug"
+        elif _bereich == "Fahrzeuge":
+            _bezug = f"Fahrzeug {_ref}" if _ref else "Fahrzeug"
+        elif _bereich == "Personal":
+            _bezug = f"Personal – {_ref}" if _ref else "Personal"
+        elif _bereich == "Sachschäden":
+            _bezug = f"Sachschaden – {_ref}" if _ref else "Sachschaden"
+        elif _bereich == "Infrastruktur":
+            _bezug = f"Infrastruktur – {_ref}" if _ref else "Infrastruktur"
+        else:
+            _bezug = _ref if _ref else (_bereich or "Vorkommnis")
+
         titel = doc.add_heading(
-            f"Vorkommnis Bericht – {d['typ']} Flug {d['flug']}", level=1
+            f"Vorkommnis Bericht – {d['typ']} – {_bezug}", level=1
         )
         titel.runs[0].font.color.rgb = RGBColor(0x15, 0x65, 0xa8)
 
         # ── Grunddaten-Tabelle ────────────────────────────────────────────────
+        _ref_label = _BEREICH_LABEL.get(_bereich, "Bezeichnung / Flugnummer:").rstrip(":")
         grund_daten = [
-            ("Flug",   d["flug"]),
-            ("Datum",  d["datum"]),
-            ("Ort",    d["ort"]),
+            ("Vorkommnis-Typ",  d["typ"]),
+            ("Bereich",         _bereich or "–"),
+            (_ref_label,        d["flug"]),
+            ("Datum",           d["datum"]),
+            ("Ort",             d["ort"]),
         ]
         if d.get("offblock_plan"):
             grund_daten.append(("Geplanter Offblock", d["offblock_plan"]))
