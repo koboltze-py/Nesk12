@@ -6,6 +6,7 @@ Export als Word-Dokument mit Firmenlogo und Anschrift.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from datetime import datetime, date
 from pathlib import Path
@@ -614,14 +615,25 @@ class VorkommnisseWidget(QWidget):
         btn_loeschen.setStyleSheet(_BTN_DANGER)
         btn_loeschen.setToolTip("Ausgewähltes Vorkommnis dauerhaft löschen")
         btn_loeschen.clicked.connect(self._loeschen_aus_liste)
+        btn_eigener = QPushButton("➕  Eigener Eintrag")
+        btn_eigener.setStyleSheet(_BTN_SEC)
+        btn_eigener.setToolTip("Eigenen Eintrag anlegen und optional Word-Datei verknüpfen")
+        btn_eigener.clicked.connect(self._eigener_eintrag_dialog)
+        btn_word_oeffnen = QPushButton("📄  Word öffnen")
+        btn_word_oeffnen.setStyleSheet(_BTN_SEC)
+        btn_word_oeffnen.setToolTip("Verknüpfte Word-Datei des ausgewählten Eintrags öffnen")
+        btn_word_oeffnen.clicked.connect(self._word_datei_oeffnen)
         toolbar.addWidget(btn_laden)
         toolbar.addWidget(btn_loeschen)
+        toolbar.addSpacing(16)
+        toolbar.addWidget(btn_eigener)
+        toolbar.addWidget(btn_word_oeffnen)
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
-        self._liste_table = QTableWidget(0, 7)
+        self._liste_table = QTableWidget(0, 8)
         self._liste_table.setHorizontalHeaderLabels(
-            ["ID", "Flug/Ref.", "Typ", "Bereich", "Datum", "Ort", "Erstellt von"]
+            ["ID", "Flug/Ref.", "Typ", "Bereich", "Datum", "Ort", "Word", "Erstellt von"]
         )
         self._liste_table.setStyleSheet(_TABLE_STYLE)
         self._liste_table.setSelectionBehavior(
@@ -638,7 +650,8 @@ class VorkommnisseWidget(QWidget):
         self._liste_table.setColumnWidth(3, 110)
         self._liste_table.setColumnWidth(4, 100)
         self._liste_table.setColumnWidth(5, 140)
-        self._liste_table.doubleClicked.connect(self._laden_aus_liste)
+        self._liste_table.setColumnWidth(6, 65)
+        self._liste_table.doubleClicked.connect(self._liste_doppelklick)
         self._liste_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._liste_table.customContextMenuRequested.connect(
             self._liste_context_menu
@@ -653,12 +666,22 @@ class VorkommnisseWidget(QWidget):
             "QMenu::item { padding: 6px 20px; }"
             "QMenu::item:selected { background: #dbeafe; color: #1b3a5c; }"
         )
-        act_open = QAction("📥  Öffnen / Bearbeiten", self)
-        act_del  = QAction("🗑  Löschen", self)
+        act_open   = QAction("📥  Öffnen / Bearbeiten", self)
+        act_del    = QAction("🗑  Löschen", self)
+        act_word   = QAction("📄  Word-Datei öffnen", self)
+        act_link   = QAction("🔗  Word-Datei verknüpfen …", self)
+        act_unlink = QAction("✖  Word-Verknüpfung entfernen", self)
         act_open.triggered.connect(self._laden_aus_liste)
         act_del.triggered.connect(self._loeschen_aus_liste)
+        act_word.triggered.connect(self._word_datei_oeffnen)
+        act_link.triggered.connect(self._word_datei_verknuepfen)
+        act_unlink.triggered.connect(self._word_datei_entfernen)
         menu.addAction(act_open)
         menu.addAction(act_del)
+        menu.addSeparator()
+        menu.addAction(act_word)
+        menu.addAction(act_link)
+        menu.addAction(act_unlink)
         menu.exec(self._liste_table.viewport().mapToGlobal(pos))
 
     def _build_grunddaten(self) -> QGroupBox:
@@ -860,15 +883,34 @@ class VorkommnisseWidget(QWidget):
         for d in gefiltert:
             r = self._liste_table.rowCount()
             self._liste_table.insertRow(r)
+            # Spalten 0-5: ID, Flug, Typ, Bereich, Datum, Ort
             for col, val in enumerate([
                 str(d["id"]), d["flug"], d["typ"], d.get("bereich", ""),
-                d["datum"], d["ort"], d["erstellt_von"],
+                d["datum"], d["ort"],
             ]):
                 item = QTableWidgetItem(val)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if d["id"] == self._current_id:
                     item.setBackground(QColor("#dbeafe"))
                 self._liste_table.setItem(r, col, item)
+            # Spalte 6: Word-Datei Indikator
+            word_datei = d.get("word_datei", "")
+            word_item = QTableWidgetItem("📄" if word_datei else "−")
+            word_item.setFlags(word_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            word_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if word_datei:
+                abs_pfad = self._berichte_basis_dir() / word_datei
+                word_item.setToolTip(str(abs_pfad))
+                word_item.setData(Qt.ItemDataRole.UserRole, word_datei)
+            if d["id"] == self._current_id:
+                word_item.setBackground(QColor("#dbeafe"))
+            self._liste_table.setItem(r, 6, word_item)
+            # Spalte 7: Erstellt von
+            ev_item = QTableWidgetItem(d["erstellt_von"])
+            ev_item.setFlags(ev_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if d["id"] == self._current_id:
+                ev_item.setBackground(QColor("#dbeafe"))
+            self._liste_table.setItem(r, 7, ev_item)
 
     def _aktualisiere_status(self):
         if self._current_id is None:
@@ -891,6 +933,261 @@ class VorkommnisseWidget(QWidget):
         lbl = _BEREICH_LABEL.get(bereich, "Bezeichnung / Flugnummer:")
         if self._flug_lbl:
             self._flug_lbl.setText(lbl)
+
+    # ── Formular-Helfer ────────────────────────────────────────────────────────
+
+    def _liste_doppelklick(self, index):
+        """Doppelklick auf Word-Spalte öffnet die Datei, sonst wird der Eintrag geladen."""
+        if index.column() == 6:
+            self._word_datei_oeffnen()
+        else:
+            self._laden_aus_liste()
+
+    def _word_datei_oeffnen(self):
+        """Öffnet die verknüpfte Word-Datei des ausgewählten Eintrags."""
+        row = self._liste_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst einen Eintrag auswählen.")
+            return
+        word_item = self._liste_table.item(row, 6)
+        word_datei = word_item.data(Qt.ItemDataRole.UserRole) if word_item else None
+        if not word_datei:
+            QMessageBox.information(self, "Keine Word-Datei", "Für diesen Eintrag ist keine Word-Datei verknüpft.")
+            return
+        abs_pfad = self._berichte_basis_dir() / word_datei
+        if not abs_pfad.exists():
+            QMessageBox.warning(self, "Datei nicht gefunden",
+                                f"Die verknüpfte Datei wurde nicht gefunden:\n{abs_pfad}")
+            return
+        os.startfile(str(abs_pfad))
+
+    def _word_datei_verknuepfen(self):
+        """Wählt eine Word-Datei per Windows-Dialog aus, kopiert sie in den Berichte-Ordner
+        und verknüpft sie mit dem ausgewählten Eintrag."""
+        row = self._liste_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst einen Eintrag auswählen.")
+            return
+        id_item = self._liste_table.item(row, 0)
+        if not id_item:
+            return
+        vid = int(id_item.text())
+        datum_item = self._liste_table.item(row, 4)
+        datum = datum_item.text() if datum_item else datetime.today().strftime("%d.%m.%Y")
+
+        pfad, _ = QFileDialog.getOpenFileName(
+            self, "Word-Datei auswählen", "",
+            "Word-Dokument (*.docx *.doc)",
+        )
+        if not pfad:
+            return
+
+        try:
+            ziel_dir = self._monats_dir(datum)
+            dateiname = os.path.basename(pfad)
+            ziel_pfad = ziel_dir / dateiname
+            # Überschreiben vermeiden: Zähler anhängen
+            if ziel_pfad.exists():
+                try:
+                    same = os.path.samefile(pfad, str(ziel_pfad))
+                except OSError:
+                    same = False
+                if not same:
+                    stem, suffix = Path(dateiname).stem, Path(dateiname).suffix
+                    i = 1
+                    while ziel_pfad.exists():
+                        ziel_pfad = ziel_dir / f"{stem}_{i}{suffix}"
+                        i += 1
+                    shutil.copy2(pfad, ziel_pfad)
+            else:
+                shutil.copy2(pfad, ziel_pfad)
+            word_rel = ziel_pfad.relative_to(self._berichte_basis_dir()).as_posix()
+        except Exception as exc:
+            QMessageBox.critical(self, "Fehler beim Kopieren", str(exc))
+            return
+
+        from functions.vorkommnisse_db import setze_word_datei
+        try:
+            setze_word_datei(vid, word_rel)
+            self._aktualisiere_liste()
+            QMessageBox.information(self, "Verknüpft",
+                                    f"Word-Datei wurde verknüpft:\n{os.path.basename(str(ziel_pfad))}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Fehler", str(exc))
+
+    def _word_datei_entfernen(self):
+        """Entfernt die Word-Verknüpfung vom ausgewählten Eintrag (Datei bleibt erhalten)."""
+        row = self._liste_table.currentRow()
+        if row < 0:
+            return
+        id_item = self._liste_table.item(row, 0)
+        if not id_item:
+            return
+        vid = int(id_item.text())
+        antwort = QMessageBox.question(
+            self, "Verknüpfung entfernen",
+            "Die Word-Verknüpfung für diesen Eintrag wirklich entfernen?\n"
+            "(Die Datei selbst bleibt erhalten.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if antwort != QMessageBox.StandardButton.Yes:
+            return
+        from functions.vorkommnisse_db import setze_word_datei
+        setze_word_datei(vid, "")
+        self._aktualisiere_liste()
+
+    def _eigener_eintrag_dialog(self):
+        """Öffnet einen Dialog zum Anlegen eines eigenen Eintrags mit optionaler Word-Datei."""
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QFormLayout, QDialogButtonBox,
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Eigener Eintrag anlegen")
+        dlg.setMinimumWidth(520)
+        dlg.setStyleSheet("background: #f5f6f7;")
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(10)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        bezeichnung = QLineEdit()
+        bezeichnung.setPlaceholderText("z. B. XQ983 / Fahrzeug C58 / …")
+        bezeichnung.setStyleSheet(_LINE_EDIT_STYLE)
+
+        typ_combo = QComboBox()
+        typ_combo.addItems(VORKOMMNIS_TYPEN)
+        typ_combo.setStyleSheet(_LINE_EDIT_STYLE)
+
+        bereich_combo = QComboBox()
+        bereich_combo.addItems(BEREICH_OPTIONEN)
+        bereich_combo.setStyleSheet(_LINE_EDIT_STYLE)
+
+        datum_edit = QDateEdit(QDate.currentDate())
+        datum_edit.setCalendarPopup(True)
+        datum_edit.setDisplayFormat("dd.MM.yyyy")
+        datum_edit.setStyleSheet(_LINE_EDIT_STYLE)
+
+        ort_edit = QLineEdit()
+        ort_edit.setPlaceholderText("z. B. Köln/Bonn (CGN)")
+        ort_edit.setStyleSheet(_LINE_EDIT_STYLE)
+
+        erstellt_von_edit = QLineEdit()
+        erstellt_von_edit.setPlaceholderText("Name des Verfassers")
+        erstellt_von_edit.setStyleSheet(_LINE_EDIT_STYLE)
+
+        # Word-Datei Auswahl
+        word_pfad_edit = QLineEdit()
+        word_pfad_edit.setReadOnly(True)
+        word_pfad_edit.setPlaceholderText("(keine Word-Datei ausgewählt)")
+        word_pfad_edit.setStyleSheet(_LINE_EDIT_STYLE)
+        btn_word_waehlen = QPushButton("📂  Auswählen …")
+        btn_word_waehlen.setStyleSheet(_BTN_SEC)
+
+        word_row_widget = QWidget()
+        word_hl = QHBoxLayout(word_row_widget)
+        word_hl.setContentsMargins(0, 0, 0, 0)
+        word_hl.setSpacing(6)
+        word_hl.addWidget(word_pfad_edit, 1)
+        word_hl.addWidget(btn_word_waehlen)
+
+        form.addRow("Bezeichnung / Flugnr.:", bezeichnung)
+        form.addRow("Typ:", typ_combo)
+        form.addRow("Bereich:", bereich_combo)
+        form.addRow("Datum:", datum_edit)
+        form.addRow("Ort:", ort_edit)
+        form.addRow("Erstellt von:", erstellt_von_edit)
+        form.addRow("Word-Datei (optional):", word_row_widget)
+        layout.addLayout(form)
+
+        selected_file: list[str | None] = [None]
+
+        def _waehle_word():
+            pfad, _ = QFileDialog.getOpenFileName(
+                dlg, "Word-Datei auswählen", "",
+                "Word-Dokument (*.docx *.doc)",
+            )
+            if pfad:
+                selected_file[0] = pfad
+                word_pfad_edit.setText(os.path.basename(pfad))
+
+        btn_word_waehlen.clicked.connect(_waehle_word)
+
+        btn_box = QDialogButtonBox()
+        btn_speichern = btn_box.addButton("💾  Speichern", QDialogButtonBox.ButtonRole.AcceptRole)
+        btn_ab = btn_box.addButton("Abbrechen", QDialogButtonBox.ButtonRole.RejectRole)
+        btn_box.rejected.connect(dlg.reject)
+
+        def _do_speichern():
+            if not bezeichnung.text().strip():
+                QMessageBox.warning(dlg, "Fehler", "Bitte Bezeichnung / Flugnummer eingeben.")
+                return
+            dlg.accept()
+
+        btn_speichern.clicked.connect(_do_speichern)
+        layout.addWidget(btn_box)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        datum_str = datum_edit.date().toString("dd.MM.yyyy")
+
+        # Word-Datei in Berichte-Ordner kopieren
+        word_rel = ""
+        if selected_file[0] and os.path.isfile(selected_file[0]):
+            try:
+                ziel_dir = self._monats_dir(datum_str)
+                dateiname = os.path.basename(selected_file[0])
+                ziel_pfad = ziel_dir / dateiname
+                if ziel_pfad.exists():
+                    try:
+                        same = os.path.samefile(selected_file[0], str(ziel_pfad))
+                    except OSError:
+                        same = False
+                    if not same:
+                        stem, suffix = Path(dateiname).stem, Path(dateiname).suffix
+                        i = 1
+                        while ziel_pfad.exists():
+                            ziel_pfad = ziel_dir / f"{stem}_{i}{suffix}"
+                            i += 1
+                        shutil.copy2(selected_file[0], ziel_pfad)
+                else:
+                    shutil.copy2(selected_file[0], ziel_pfad)
+                word_rel = ziel_pfad.relative_to(self._berichte_basis_dir()).as_posix()
+            except Exception as exc:
+                QMessageBox.warning(self, "Hinweis",
+                                    f"Word-Datei konnte nicht kopiert werden:\n{exc}")
+
+        daten = {
+            "flug":          bezeichnung.text().strip(),
+            "typ":           typ_combo.currentText(),
+            "bereich":       bereich_combo.currentText(),
+            "datum":         datum_str,
+            "ort":           ort_edit.text().strip(),
+            "erstellt_von":  erstellt_von_edit.text().strip(),
+            "offblock_plan": "",
+            "offblock_ist":  "",
+            "passagiere":    [],
+            "personal":      [],
+            "chronologie":   [],
+            "ursache":       "",
+            "ergebnis":      "",
+            "word_datei":    word_rel,
+        }
+
+        from functions.vorkommnisse_db import speichern
+        try:
+            new_id = speichern(daten)
+            self._aktualisiere_liste()
+            QMessageBox.information(self, "Gespeichert",
+                                    f"Eigener Eintrag #{new_id} wurde angelegt.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Fehler beim Speichern", str(exc))
 
     # ── Formular-Helfer ────────────────────────────────────────────────────────
 
@@ -1294,6 +1591,18 @@ class VorkommnisseWidget(QWidget):
                 self, "Exportiert",
                 f"Vorkommnisbericht gespeichert:\n{pfad}",
             )
+            # Word-Datei automatisch mit dem DB-Eintrag verknüpfen
+            if self._current_id is not None:
+                try:
+                    basis = self._berichte_basis_dir()
+                    pfad_obj = Path(pfad)
+                    if pfad_obj.is_relative_to(basis):
+                        rel = pfad_obj.relative_to(basis).as_posix()
+                        from functions.vorkommnisse_db import setze_word_datei
+                        setze_word_datei(self._current_id, rel)
+                        self._aktualisiere_liste()
+                except Exception:
+                    pass
             os.startfile(pfad)
         except ImportError:
             QMessageBox.critical(
