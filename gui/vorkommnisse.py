@@ -6,6 +6,7 @@ Export als Word-Dokument mit Firmenlogo und Anschrift.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from datetime import datetime, date
 from pathlib import Path
@@ -473,10 +474,35 @@ class VorkommnisseWidget(QWidget):
 
         c_layout.addWidget(self._build_grunddaten())
 
-        grp_pax = QGroupBox("1. Betroffene Personen")
-        grp_pax.setStyleSheet(_GROUP_STYLE)
-        pax_layout = QVBoxLayout(grp_pax)
+        # Liste der zusätzlichen Abschnitte (QLineEdit title, QTextEdit text, QWidget container)
+        self._extra_bloecke: list = []
+
+        # Hilfsfunktion: kleine Titelzeile mit ✏-Icon für jeden Abschnitt
+        def _titel_row(default: str, titel_attr: str, grp: QGroupBox, nr: int) -> QWidget:
+            w = QWidget()
+            w.setStyleSheet("background: transparent;")
+            hl = QHBoxLayout(w)
+            hl.setContentsMargins(0, 0, 0, 4)
+            hl.setSpacing(6)
+            icon = QLabel("✏")
+            icon.setStyleSheet("color: #8fa8c0; font-size: 10px; background: transparent;")
+            icon.setFixedWidth(14)
+            te = QLineEdit(default)
+            te.setStyleSheet(_LINE_EDIT_STYLE)
+            te.setToolTip("Abschnittsname anpassen – wird im Word-Bericht übernommen")
+            te.textChanged.connect(
+                lambda t, g=grp, n=nr: g.setTitle(f"{n}. {t}" if t.strip() else f"{n}.")
+            )
+            setattr(self, titel_attr, te)
+            hl.addWidget(icon)
+            hl.addWidget(te)
+            return w
+
+        self._grp_pax = QGroupBox("1. Betroffene Personen")
+        self._grp_pax.setStyleSheet(_GROUP_STYLE)
+        pax_layout = QVBoxLayout(self._grp_pax)
         pax_layout.setContentsMargins(10, 14, 10, 10)
+        pax_layout.addWidget(_titel_row("Betroffene Personen", "_titel_1", self._grp_pax, 1))
         self._pax_table = _EditTable(
             headers=["Person (Name, Vorname)", "Typ", "Kategorie", "Anmerkung"],
             combo_columns={
@@ -487,35 +513,38 @@ class VorkommnisseWidget(QWidget):
             conditional_columns={2: (1, ["PRM Passagier"])},
         )
         pax_layout.addWidget(self._pax_table)
-        c_layout.addWidget(grp_pax)
+        c_layout.addWidget(self._grp_pax)
 
-        grp_personal = QGroupBox("2. Eingeteiltes Personal")
-        grp_personal.setStyleSheet(_GROUP_STYLE)
-        pers_layout = QVBoxLayout(grp_personal)
+        self._grp_personal = QGroupBox("2. Eingeteiltes Personal")
+        self._grp_personal.setStyleSheet(_GROUP_STYLE)
+        pers_layout = QVBoxLayout(self._grp_personal)
         pers_layout.setContentsMargins(10, 14, 10, 10)
+        pers_layout.addWidget(_titel_row("Eingeteiltes Personal", "_titel_2", self._grp_personal, 2))
         self._personal_table = _EditTable(
             headers=["Name (Mitarbeiter)", "Funktion/Rolle", "Anmerkung"],
             combo_columns={1: MITARBEITER_ROLLEN},
             column_widths={0: 200, 1: 150},
         )
         pers_layout.addWidget(self._personal_table)
-        c_layout.addWidget(grp_personal)
+        c_layout.addWidget(self._grp_personal)
 
-        grp_chrono = QGroupBox("3. Chronologischer Ablauf")
-        grp_chrono.setStyleSheet(_GROUP_STYLE)
-        chrono_layout = QVBoxLayout(grp_chrono)
+        self._grp_chrono = QGroupBox("3. Chronologischer Ablauf")
+        self._grp_chrono.setStyleSheet(_GROUP_STYLE)
+        chrono_layout = QVBoxLayout(self._grp_chrono)
         chrono_layout.setContentsMargins(10, 14, 10, 10)
+        chrono_layout.addWidget(_titel_row("Chronologischer Ablauf", "_titel_3", self._grp_chrono, 3))
         self._chrono_table = _EditTable(
             headers=["Uhrzeit", "Ereignis"],
             column_widths={0: 110},
         )
         chrono_layout.addWidget(self._chrono_table)
-        c_layout.addWidget(grp_chrono)
+        c_layout.addWidget(self._grp_chrono)
 
-        grp_ursache = QGroupBox("4. Ursachenanalyse")
-        grp_ursache.setStyleSheet(_GROUP_STYLE)
-        ursache_layout = QVBoxLayout(grp_ursache)
+        self._grp_ursache = QGroupBox("4. Ursachenanalyse")
+        self._grp_ursache.setStyleSheet(_GROUP_STYLE)
+        ursache_layout = QVBoxLayout(self._grp_ursache)
         ursache_layout.setContentsMargins(10, 14, 10, 10)
+        ursache_layout.addWidget(_titel_row("Ursachenanalyse", "_titel_4", self._grp_ursache, 4))
         self._ursache_edit = QTextEdit()
         self._ursache_edit.setPlaceholderText(
             "Ursachen des Vorkommnisses stichpunktartig beschreiben ..."
@@ -523,12 +552,13 @@ class VorkommnisseWidget(QWidget):
         self._ursache_edit.setMinimumHeight(100)
         self._ursache_edit.setStyleSheet(_LINE_EDIT_STYLE)
         ursache_layout.addWidget(self._ursache_edit)
-        c_layout.addWidget(grp_ursache)
+        c_layout.addWidget(self._grp_ursache)
 
-        grp_ergebnis = QGroupBox("5. Ergebnis")
-        grp_ergebnis.setStyleSheet(_GROUP_STYLE)
-        erg_layout = QVBoxLayout(grp_ergebnis)
+        self._grp_ergebnis = QGroupBox("5. Ergebnis")
+        self._grp_ergebnis.setStyleSheet(_GROUP_STYLE)
+        erg_layout = QVBoxLayout(self._grp_ergebnis)
         erg_layout.setContentsMargins(10, 14, 10, 10)
+        erg_layout.addWidget(_titel_row("Ergebnis", "_titel_5", self._grp_ergebnis, 5))
         self._ergebnis_edit = QTextEdit()
         self._ergebnis_edit.setPlaceholderText(
             "Ergebnis und Ausgang des Vorkommnisses ..."
@@ -536,7 +566,22 @@ class VorkommnisseWidget(QWidget):
         self._ergebnis_edit.setMinimumHeight(80)
         self._ergebnis_edit.setStyleSheet(_LINE_EDIT_STYLE)
         erg_layout.addWidget(self._ergebnis_edit)
-        c_layout.addWidget(grp_ergebnis)
+        c_layout.addWidget(self._grp_ergebnis)
+
+        # ── Zusätzliche Abschnitte ────────────────────────────────────────────
+        self._grp_extra = QGroupBox("Zusätzliche Abschnitte")
+        self._grp_extra.setStyleSheet(_GROUP_STYLE)
+        _extra_outer = QVBoxLayout(self._grp_extra)
+        _extra_outer.setContentsMargins(10, 14, 10, 10)
+        _extra_outer.setSpacing(8)
+        self._extra_container = QVBoxLayout()
+        self._extra_container.setSpacing(10)
+        _extra_outer.addLayout(self._extra_container)
+        btn_add_block = QPushButton("➕  Weiteren Abschnitt hinzufügen")
+        btn_add_block.setStyleSheet(_BTN_PRIM)
+        btn_add_block.clicked.connect(lambda: self._add_extra_block())
+        _extra_outer.addWidget(btn_add_block)
+        c_layout.addWidget(self._grp_extra)
 
         c_layout.addStretch()
         scroll.setWidget(content)
@@ -614,14 +659,25 @@ class VorkommnisseWidget(QWidget):
         btn_loeschen.setStyleSheet(_BTN_DANGER)
         btn_loeschen.setToolTip("Ausgewähltes Vorkommnis dauerhaft löschen")
         btn_loeschen.clicked.connect(self._loeschen_aus_liste)
+        btn_eigener = QPushButton("➕  Eigener Eintrag")
+        btn_eigener.setStyleSheet(_BTN_SEC)
+        btn_eigener.setToolTip("Eigenen Eintrag anlegen und optional Word-Datei verknüpfen")
+        btn_eigener.clicked.connect(self._eigener_eintrag_dialog)
+        btn_word_oeffnen = QPushButton("📄  Word öffnen")
+        btn_word_oeffnen.setStyleSheet(_BTN_SEC)
+        btn_word_oeffnen.setToolTip("Verknüpfte Word-Datei des ausgewählten Eintrags öffnen")
+        btn_word_oeffnen.clicked.connect(self._word_datei_oeffnen)
         toolbar.addWidget(btn_laden)
         toolbar.addWidget(btn_loeschen)
+        toolbar.addSpacing(16)
+        toolbar.addWidget(btn_eigener)
+        toolbar.addWidget(btn_word_oeffnen)
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
-        self._liste_table = QTableWidget(0, 7)
+        self._liste_table = QTableWidget(0, 8)
         self._liste_table.setHorizontalHeaderLabels(
-            ["ID", "Flug/Ref.", "Typ", "Bereich", "Datum", "Ort", "Erstellt von"]
+            ["ID", "Flug/Ref.", "Typ", "Bereich", "Datum", "Ort", "Word", "Erstellt von"]
         )
         self._liste_table.setStyleSheet(_TABLE_STYLE)
         self._liste_table.setSelectionBehavior(
@@ -638,7 +694,8 @@ class VorkommnisseWidget(QWidget):
         self._liste_table.setColumnWidth(3, 110)
         self._liste_table.setColumnWidth(4, 100)
         self._liste_table.setColumnWidth(5, 140)
-        self._liste_table.doubleClicked.connect(self._laden_aus_liste)
+        self._liste_table.setColumnWidth(6, 65)
+        self._liste_table.doubleClicked.connect(self._liste_doppelklick)
         self._liste_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._liste_table.customContextMenuRequested.connect(
             self._liste_context_menu
@@ -653,12 +710,22 @@ class VorkommnisseWidget(QWidget):
             "QMenu::item { padding: 6px 20px; }"
             "QMenu::item:selected { background: #dbeafe; color: #1b3a5c; }"
         )
-        act_open = QAction("📥  Öffnen / Bearbeiten", self)
-        act_del  = QAction("🗑  Löschen", self)
+        act_open   = QAction("📥  Öffnen / Bearbeiten", self)
+        act_del    = QAction("🗑  Löschen", self)
+        act_word   = QAction("📄  Word-Datei öffnen", self)
+        act_link   = QAction("🔗  Word-Datei verknüpfen …", self)
+        act_unlink = QAction("✖  Word-Verknüpfung entfernen", self)
         act_open.triggered.connect(self._laden_aus_liste)
         act_del.triggered.connect(self._loeschen_aus_liste)
+        act_word.triggered.connect(self._word_datei_oeffnen)
+        act_link.triggered.connect(self._word_datei_verknuepfen)
+        act_unlink.triggered.connect(self._word_datei_entfernen)
         menu.addAction(act_open)
         menu.addAction(act_del)
+        menu.addSeparator()
+        menu.addAction(act_word)
+        menu.addAction(act_link)
+        menu.addAction(act_unlink)
         menu.exec(self._liste_table.viewport().mapToGlobal(pos))
 
     def _build_grunddaten(self) -> QGroupBox:
@@ -860,15 +927,34 @@ class VorkommnisseWidget(QWidget):
         for d in gefiltert:
             r = self._liste_table.rowCount()
             self._liste_table.insertRow(r)
+            # Spalten 0-5: ID, Flug, Typ, Bereich, Datum, Ort
             for col, val in enumerate([
                 str(d["id"]), d["flug"], d["typ"], d.get("bereich", ""),
-                d["datum"], d["ort"], d["erstellt_von"],
+                d["datum"], d["ort"],
             ]):
                 item = QTableWidgetItem(val)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 if d["id"] == self._current_id:
                     item.setBackground(QColor("#dbeafe"))
                 self._liste_table.setItem(r, col, item)
+            # Spalte 6: Word-Datei Indikator
+            word_datei = d.get("word_datei", "")
+            word_item = QTableWidgetItem("📄" if word_datei else "−")
+            word_item.setFlags(word_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            word_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if word_datei:
+                abs_pfad = self._berichte_basis_dir() / word_datei
+                word_item.setToolTip(str(abs_pfad))
+                word_item.setData(Qt.ItemDataRole.UserRole, word_datei)
+            if d["id"] == self._current_id:
+                word_item.setBackground(QColor("#dbeafe"))
+            self._liste_table.setItem(r, 6, word_item)
+            # Spalte 7: Erstellt von
+            ev_item = QTableWidgetItem(d["erstellt_von"])
+            ev_item.setFlags(ev_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if d["id"] == self._current_id:
+                ev_item.setBackground(QColor("#dbeafe"))
+            self._liste_table.setItem(r, 7, ev_item)
 
     def _aktualisiere_status(self):
         if self._current_id is None:
@@ -892,6 +978,319 @@ class VorkommnisseWidget(QWidget):
         if self._flug_lbl:
             self._flug_lbl.setText(lbl)
 
+    def _add_extra_block(self, titel: str = "", text: str = "") -> None:
+        """Fügt einen neuen editierbaren Textabschnitt am Ende des Formulars hinzu."""
+        from PySide6.QtWidgets import QFrame
+        nr = len(self._extra_bloecke) + 6
+
+        container = QFrame()
+        container.setStyleSheet(
+            "QFrame { border: 1px solid #c5d0de; border-radius: 4px; "
+            "background: white; margin: 0px; }"
+        )
+        c_lay = QVBoxLayout(container)
+        c_lay.setContentsMargins(10, 10, 10, 10)
+        c_lay.setSpacing(6)
+
+        # Kopfzeile: Nummer + Titel-Edit + Entfernen-Button
+        header = QWidget()
+        header.setStyleSheet("background: transparent; border: none;")
+        h_lay = QHBoxLayout(header)
+        h_lay.setContentsMargins(0, 0, 0, 0)
+        h_lay.setSpacing(6)
+        num_lbl = QLabel(f"{nr}.")
+        num_lbl.setStyleSheet(
+            "font-weight: bold; color: #1b3a5c; font-size: 13px; "
+            "background: transparent; border: none; min-width: 22px;"
+        )
+        title_edit = QLineEdit(titel)
+        title_edit.setPlaceholderText("Abschnittsname …")
+        title_edit.setStyleSheet(_LINE_EDIT_STYLE)
+        title_edit.setToolTip("Abschnittsname des zusätzlichen Abschnitts")
+        btn_remove = QPushButton("✖")
+        btn_remove.setFixedSize(28, 28)
+        btn_remove.setStyleSheet(_BTN_DANGER)
+        btn_remove.setToolTip("Abschnitt entfernen")
+        h_lay.addWidget(num_lbl)
+        h_lay.addWidget(title_edit, 1)
+        h_lay.addWidget(btn_remove)
+        c_lay.addWidget(header)
+
+        text_edit = QTextEdit()
+        if text:
+            text_edit.setPlainText(text)
+        text_edit.setPlaceholderText("Inhalt des Abschnitts …")
+        text_edit.setMinimumHeight(80)
+        text_edit.setStyleSheet(_LINE_EDIT_STYLE)
+        c_lay.addWidget(text_edit)
+
+        self._extra_container.addWidget(container)
+        entry = (title_edit, text_edit, container)
+        self._extra_bloecke.append(entry)
+
+        def _remove():
+            if entry in self._extra_bloecke:
+                self._extra_bloecke.remove(entry)
+            container.setParent(None)
+            container.deleteLater()
+
+        btn_remove.clicked.connect(_remove)
+
+    # ── Formular-Helfer ────────────────────────────────────────────────────────
+
+    def _liste_doppelklick(self, index):
+        """Doppelklick auf Word-Spalte öffnet die Datei, sonst wird der Eintrag geladen."""
+        if index.column() == 6:
+            self._word_datei_oeffnen()
+        else:
+            self._laden_aus_liste()
+
+    def _word_datei_oeffnen(self):
+        """Öffnet die verknüpfte Word-Datei des ausgewählten Eintrags."""
+        row = self._liste_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst einen Eintrag auswählen.")
+            return
+        word_item = self._liste_table.item(row, 6)
+        word_datei = word_item.data(Qt.ItemDataRole.UserRole) if word_item else None
+        if not word_datei:
+            QMessageBox.information(self, "Keine Word-Datei", "Für diesen Eintrag ist keine Word-Datei verknüpft.")
+            return
+        abs_pfad = self._berichte_basis_dir() / word_datei
+        if not abs_pfad.exists():
+            QMessageBox.warning(self, "Datei nicht gefunden",
+                                f"Die verknüpfte Datei wurde nicht gefunden:\n{abs_pfad}")
+            return
+        os.startfile(str(abs_pfad))
+
+    def _word_datei_verknuepfen(self):
+        """Wählt eine Word-Datei per Windows-Dialog aus, kopiert sie in den Berichte-Ordner
+        und verknüpft sie mit dem ausgewählten Eintrag."""
+        row = self._liste_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst einen Eintrag auswählen.")
+            return
+        id_item = self._liste_table.item(row, 0)
+        if not id_item:
+            return
+        vid = int(id_item.text())
+        datum_item = self._liste_table.item(row, 4)
+        datum = datum_item.text() if datum_item else datetime.today().strftime("%d.%m.%Y")
+
+        pfad, _ = QFileDialog.getOpenFileName(
+            self, "Word-Datei auswählen", "",
+            "Word-Dokument (*.docx *.doc)",
+        )
+        if not pfad:
+            return
+
+        try:
+            ziel_dir = self._monats_dir(datum)
+            dateiname = os.path.basename(pfad)
+            ziel_pfad = ziel_dir / dateiname
+            # Überschreiben vermeiden: Zähler anhängen
+            if ziel_pfad.exists():
+                try:
+                    same = os.path.samefile(pfad, str(ziel_pfad))
+                except OSError:
+                    same = False
+                if not same:
+                    stem, suffix = Path(dateiname).stem, Path(dateiname).suffix
+                    i = 1
+                    while ziel_pfad.exists():
+                        ziel_pfad = ziel_dir / f"{stem}_{i}{suffix}"
+                        i += 1
+                    shutil.copy2(pfad, ziel_pfad)
+            else:
+                shutil.copy2(pfad, ziel_pfad)
+            word_rel = ziel_pfad.relative_to(self._berichte_basis_dir()).as_posix()
+        except Exception as exc:
+            QMessageBox.critical(self, "Fehler beim Kopieren", str(exc))
+            return
+
+        from functions.vorkommnisse_db import setze_word_datei
+        try:
+            setze_word_datei(vid, word_rel)
+            self._aktualisiere_liste()
+            QMessageBox.information(self, "Verknüpft",
+                                    f"Word-Datei wurde verknüpft:\n{os.path.basename(str(ziel_pfad))}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Fehler", str(exc))
+
+    def _word_datei_entfernen(self):
+        """Entfernt die Word-Verknüpfung vom ausgewählten Eintrag (Datei bleibt erhalten)."""
+        row = self._liste_table.currentRow()
+        if row < 0:
+            return
+        id_item = self._liste_table.item(row, 0)
+        if not id_item:
+            return
+        vid = int(id_item.text())
+        antwort = QMessageBox.question(
+            self, "Verknüpfung entfernen",
+            "Die Word-Verknüpfung für diesen Eintrag wirklich entfernen?\n"
+            "(Die Datei selbst bleibt erhalten.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if antwort != QMessageBox.StandardButton.Yes:
+            return
+        from functions.vorkommnisse_db import setze_word_datei
+        setze_word_datei(vid, "")
+        self._aktualisiere_liste()
+
+    def _eigener_eintrag_dialog(self):
+        """Öffnet einen Dialog zum Anlegen eines eigenen Eintrags mit optionaler Word-Datei."""
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QFormLayout, QDialogButtonBox,
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Eigener Eintrag anlegen")
+        dlg.setMinimumWidth(520)
+        dlg.setStyleSheet("background: #f5f6f7;")
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(10)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        bezeichnung = QLineEdit()
+        bezeichnung.setPlaceholderText("z. B. XQ983 / Fahrzeug C58 / …")
+        bezeichnung.setStyleSheet(_LINE_EDIT_STYLE)
+
+        typ_combo = QComboBox()
+        typ_combo.addItems(VORKOMMNIS_TYPEN)
+        typ_combo.setStyleSheet(_LINE_EDIT_STYLE)
+
+        bereich_combo = QComboBox()
+        bereich_combo.addItems(BEREICH_OPTIONEN)
+        bereich_combo.setStyleSheet(_LINE_EDIT_STYLE)
+
+        datum_edit = QDateEdit(QDate.currentDate())
+        datum_edit.setCalendarPopup(True)
+        datum_edit.setDisplayFormat("dd.MM.yyyy")
+        datum_edit.setStyleSheet(_LINE_EDIT_STYLE)
+
+        ort_edit = QLineEdit()
+        ort_edit.setPlaceholderText("z. B. Köln/Bonn (CGN)")
+        ort_edit.setStyleSheet(_LINE_EDIT_STYLE)
+
+        erstellt_von_edit = QLineEdit()
+        erstellt_von_edit.setPlaceholderText("Name des Verfassers")
+        erstellt_von_edit.setStyleSheet(_LINE_EDIT_STYLE)
+
+        # Word-Datei Auswahl
+        word_pfad_edit = QLineEdit()
+        word_pfad_edit.setReadOnly(True)
+        word_pfad_edit.setPlaceholderText("(keine Word-Datei ausgewählt)")
+        word_pfad_edit.setStyleSheet(_LINE_EDIT_STYLE)
+        btn_word_waehlen = QPushButton("📂  Auswählen …")
+        btn_word_waehlen.setStyleSheet(_BTN_SEC)
+
+        word_row_widget = QWidget()
+        word_hl = QHBoxLayout(word_row_widget)
+        word_hl.setContentsMargins(0, 0, 0, 0)
+        word_hl.setSpacing(6)
+        word_hl.addWidget(word_pfad_edit, 1)
+        word_hl.addWidget(btn_word_waehlen)
+
+        form.addRow("Bezeichnung / Flugnr.:", bezeichnung)
+        form.addRow("Typ:", typ_combo)
+        form.addRow("Bereich:", bereich_combo)
+        form.addRow("Datum:", datum_edit)
+        form.addRow("Ort:", ort_edit)
+        form.addRow("Erstellt von:", erstellt_von_edit)
+        form.addRow("Word-Datei (optional):", word_row_widget)
+        layout.addLayout(form)
+
+        selected_file: list[str | None] = [None]
+
+        def _waehle_word():
+            pfad, _ = QFileDialog.getOpenFileName(
+                dlg, "Word-Datei auswählen", "",
+                "Word-Dokument (*.docx *.doc)",
+            )
+            if pfad:
+                selected_file[0] = pfad
+                word_pfad_edit.setText(os.path.basename(pfad))
+
+        btn_word_waehlen.clicked.connect(_waehle_word)
+
+        btn_box = QDialogButtonBox()
+        btn_speichern = btn_box.addButton("💾  Speichern", QDialogButtonBox.ButtonRole.AcceptRole)
+        btn_ab = btn_box.addButton("Abbrechen", QDialogButtonBox.ButtonRole.RejectRole)
+        btn_box.rejected.connect(dlg.reject)
+
+        def _do_speichern():
+            if not bezeichnung.text().strip():
+                QMessageBox.warning(dlg, "Fehler", "Bitte Bezeichnung / Flugnummer eingeben.")
+                return
+            dlg.accept()
+
+        btn_speichern.clicked.connect(_do_speichern)
+        layout.addWidget(btn_box)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        datum_str = datum_edit.date().toString("dd.MM.yyyy")
+
+        # Word-Datei in Berichte-Ordner kopieren
+        word_rel = ""
+        if selected_file[0] and os.path.isfile(selected_file[0]):
+            try:
+                ziel_dir = self._monats_dir(datum_str)
+                dateiname = os.path.basename(selected_file[0])
+                ziel_pfad = ziel_dir / dateiname
+                if ziel_pfad.exists():
+                    try:
+                        same = os.path.samefile(selected_file[0], str(ziel_pfad))
+                    except OSError:
+                        same = False
+                    if not same:
+                        stem, suffix = Path(dateiname).stem, Path(dateiname).suffix
+                        i = 1
+                        while ziel_pfad.exists():
+                            ziel_pfad = ziel_dir / f"{stem}_{i}{suffix}"
+                            i += 1
+                        shutil.copy2(selected_file[0], ziel_pfad)
+                else:
+                    shutil.copy2(selected_file[0], ziel_pfad)
+                word_rel = ziel_pfad.relative_to(self._berichte_basis_dir()).as_posix()
+            except Exception as exc:
+                QMessageBox.warning(self, "Hinweis",
+                                    f"Word-Datei konnte nicht kopiert werden:\n{exc}")
+
+        daten = {
+            "flug":          bezeichnung.text().strip(),
+            "typ":           typ_combo.currentText(),
+            "bereich":       bereich_combo.currentText(),
+            "datum":         datum_str,
+            "ort":           ort_edit.text().strip(),
+            "erstellt_von":  erstellt_von_edit.text().strip(),
+            "offblock_plan": "",
+            "offblock_ist":  "",
+            "passagiere":    [],
+            "personal":      [],
+            "chronologie":   [],
+            "ursache":       "",
+            "ergebnis":      "",
+            "word_datei":    word_rel,
+        }
+
+        from functions.vorkommnisse_db import speichern
+        try:
+            new_id = speichern(daten)
+            self._aktualisiere_liste()
+            QMessageBox.information(self, "Gespeichert",
+                                    f"Eigener Eintrag #{new_id} wurde angelegt.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Fehler beim Speichern", str(exc))
+
     # ── Formular-Helfer ────────────────────────────────────────────────────────
 
     def _formular_leeren(self):
@@ -910,6 +1309,17 @@ class VorkommnisseWidget(QWidget):
         self._chrono_table.set_data([])
         self._ursache_edit.clear()
         self._ergebnis_edit.clear()
+        # Abschnittstitel zurücksetzen
+        self._titel_1.setText("Betroffene Personen")
+        self._titel_2.setText("Eingeteiltes Personal")
+        self._titel_3.setText("Chronologischer Ablauf")
+        self._titel_4.setText("Ursachenanalyse")
+        self._titel_5.setText("Ergebnis")
+        # Zusätzliche Abschnitte leeren
+        for _, _, w in self._extra_bloecke:
+            w.setParent(None)
+            w.deleteLater()
+        self._extra_bloecke.clear()
 
     def _formular_befuellen(self, d: dict):
         self._flug_edit.setText(d.get("flug", ""))
@@ -940,6 +1350,20 @@ class VorkommnisseWidget(QWidget):
         self._chrono_table.set_data(d.get("chronologie", []))
         self._ursache_edit.setPlainText(d.get("ursache", ""))
         self._ergebnis_edit.setPlainText(d.get("ergebnis", ""))
+        # Abschnittstitel wiederherstellen
+        _at = d.get("abschnitt_titel", {})
+        self._titel_1.setText(_at.get("1", "Betroffene Personen"))
+        self._titel_2.setText(_at.get("2", "Eingeteiltes Personal"))
+        self._titel_3.setText(_at.get("3", "Chronologischer Ablauf"))
+        self._titel_4.setText(_at.get("4", "Ursachenanalyse"))
+        self._titel_5.setText(_at.get("5", "Ergebnis"))
+        # Zusätzliche Abschnitte wiederherstellen
+        for _, _, w in self._extra_bloecke:
+            w.setParent(None)
+            w.deleteLater()
+        self._extra_bloecke.clear()
+        for block in d.get("extra_abschnitte", []):
+            self._add_extra_block(block.get("titel", ""), block.get("text", ""))
 
     def _sammle_daten(self) -> dict:
         if self._offblock_plan_chk.isChecked():
@@ -971,19 +1395,30 @@ class VorkommnisseWidget(QWidget):
         else:
             offblock_ist_str = ""
         return {
-            "flug":          self._flug_edit.text().strip(),
-            "typ":           self._typ_combo.currentText(),
-            "bereich":       self._bereich_combo.currentText(),
-            "datum":         self._datum_edit.date().toString("dd.MM.yyyy"),
-            "ort":           self._ort_edit.text().strip(),
-            "offblock_plan": offblock_plan_str,
-            "offblock_ist":  offblock_ist_str,
-            "erstellt_von":  self._erstellt_von_edit.text().strip(),
-            "passagiere":    self._pax_table.get_data(),
-            "personal":      self._personal_table.get_data(),
-            "chronologie":   self._chrono_table.get_data(),
-            "ursache":       self._ursache_edit.toPlainText().strip(),
-            "ergebnis":      self._ergebnis_edit.toPlainText().strip(),
+            "flug":             self._flug_edit.text().strip(),
+            "typ":              self._typ_combo.currentText(),
+            "bereich":          self._bereich_combo.currentText(),
+            "datum":            self._datum_edit.date().toString("dd.MM.yyyy"),
+            "ort":              self._ort_edit.text().strip(),
+            "offblock_plan":    offblock_plan_str,
+            "offblock_ist":     offblock_ist_str,
+            "erstellt_von":     self._erstellt_von_edit.text().strip(),
+            "passagiere":       self._pax_table.get_data(),
+            "personal":         self._personal_table.get_data(),
+            "chronologie":      self._chrono_table.get_data(),
+            "ursache":          self._ursache_edit.toPlainText().strip(),
+            "ergebnis":         self._ergebnis_edit.toPlainText().strip(),
+            "abschnitt_titel": {
+                "1": self._titel_1.text().strip() or "Betroffene Personen",
+                "2": self._titel_2.text().strip() or "Eingeteiltes Personal",
+                "3": self._titel_3.text().strip() or "Chronologischer Ablauf",
+                "4": self._titel_4.text().strip() or "Ursachenanalyse",
+                "5": self._titel_5.text().strip() or "Ergebnis",
+            },
+            "extra_abschnitte": [
+                {"titel": te.text().strip(), "text": tx.toPlainText().strip()}
+                for te, tx, _ in self._extra_bloecke
+            ],
         }
 
     # ── Word-Export ────────────────────────────────────────────────────────────
@@ -1294,6 +1729,18 @@ class VorkommnisseWidget(QWidget):
                 self, "Exportiert",
                 f"Vorkommnisbericht gespeichert:\n{pfad}",
             )
+            # Word-Datei automatisch mit dem DB-Eintrag verknüpfen
+            if self._current_id is not None:
+                try:
+                    basis = self._berichte_basis_dir()
+                    pfad_obj = Path(pfad)
+                    if pfad_obj.is_relative_to(basis):
+                        rel = pfad_obj.relative_to(basis).as_posix()
+                        from functions.vorkommnisse_db import setze_word_datei
+                        setze_word_datei(self._current_id, rel)
+                        self._aktualisiere_liste()
+                except Exception:
+                    pass
             os.startfile(pfad)
         except ImportError:
             QMessageBox.critical(
@@ -1368,8 +1815,16 @@ class VorkommnisseWidget(QWidget):
             tbl_grund.rows[i].cells[0].paragraphs[0].runs[0].bold = True
         doc.add_paragraph()
 
+        # ── Abschnittstitel aus Formulardaten ─────────────────────────────────
+        _at = d.get("abschnitt_titel", {})
+        _t1 = _at.get("1", "Betroffene Personen")
+        _t2 = _at.get("2", "Eingeteiltes Personal")
+        _t3 = _at.get("3", "Chronologischer Ablauf")
+        _t4 = _at.get("4", "Ursachenanalyse")
+        _t5 = _at.get("5", "Ergebnis")
+
         # ── 1. Betroffene Personen ────────────────────────────────────────────
-        doc.add_heading("1. Betroffene Personen", level=2)
+        doc.add_heading(f"1. {_t1}", level=2)
         if d["passagiere"]:
             tbl_pax = doc.add_table(rows=1, cols=4)
             tbl_pax.style = "Table Grid"
@@ -1386,7 +1841,7 @@ class VorkommnisseWidget(QWidget):
         doc.add_paragraph()
 
         # ── 2. Personal ───────────────────────────────────────────────────────
-        doc.add_heading("2. Eingeteiltes Personal", level=2)
+        doc.add_heading(f"2. {_t2}", level=2)
         if d["personal"]:
             tbl_pers = doc.add_table(rows=1, cols=3)
             tbl_pers.style = "Table Grid"
@@ -1403,7 +1858,7 @@ class VorkommnisseWidget(QWidget):
         doc.add_paragraph()
 
         # ── 3. Chronologischer Ablauf ─────────────────────────────────────────
-        doc.add_heading("3. Chronologischer Ablauf", level=2)
+        doc.add_heading(f"3. {_t3}", level=2)
         if d["chronologie"]:
             tbl_chr = doc.add_table(rows=1, cols=2)
             tbl_chr.style = "Table Grid"
@@ -1420,14 +1875,21 @@ class VorkommnisseWidget(QWidget):
         doc.add_paragraph()
 
         # ── 4. Ursachenanalyse ────────────────────────────────────────────────
-        doc.add_heading("4. Ursachenanalyse", level=2)
+        doc.add_heading(f"4. {_t4}", level=2)
         doc.add_paragraph(d["ursache"] or "(keine Angabe)")
         doc.add_paragraph()
 
         # ── 5. Ergebnis ───────────────────────────────────────────────────────
-        doc.add_heading("5. Ergebnis", level=2)
+        doc.add_heading(f"5. {_t5}", level=2)
         doc.add_paragraph(d["ergebnis"] or "(keine Angabe)")
         doc.add_paragraph()
+
+        # ── Zusätzliche Abschnitte ────────────────────────────────────────────
+        for extra_nr, block in enumerate(d.get("extra_abschnitte", []), start=6):
+            block_titel = block.get("titel", "").strip() or "Weiterer Abschnitt"
+            doc.add_heading(f"{extra_nr}. {block_titel}", level=2)
+            doc.add_paragraph(block.get("text", "") or "(keine Angabe)")
+            doc.add_paragraph()
 
         # ── Unterschrift ──────────────────────────────────────────────────────
         doc.add_paragraph()

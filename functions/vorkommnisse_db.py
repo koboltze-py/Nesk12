@@ -67,14 +67,23 @@ def _init_db() -> None:
             passagiere_json  TEXT    NOT NULL DEFAULT '[]',
             personal_json    TEXT    NOT NULL DEFAULT '[]',
             chronologie_json TEXT    NOT NULL DEFAULT '[]',
-            erstellt_am      TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
-            geaendert_am     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+            erstellt_am             TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+            geaendert_am            TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+            word_datei              TEXT    NOT NULL DEFAULT '',
+            abschnitt_titel_json    TEXT    NOT NULL DEFAULT '{}',
+            extra_abschnitte_json   TEXT    NOT NULL DEFAULT '[]'
         );
         """)
         # Migration: bereich-Spalte für bestehende Datenbanken hinzufügen
         cols = [row[1] for row in conn.execute("PRAGMA table_info(vorkommnisse)").fetchall()]
         if "bereich" not in cols:
             conn.execute("ALTER TABLE vorkommnisse ADD COLUMN bereich TEXT NOT NULL DEFAULT ''")
+        if "word_datei" not in cols:
+            conn.execute("ALTER TABLE vorkommnisse ADD COLUMN word_datei TEXT NOT NULL DEFAULT ''")
+        if "abschnitt_titel_json" not in cols:
+            conn.execute("ALTER TABLE vorkommnisse ADD COLUMN abschnitt_titel_json TEXT NOT NULL DEFAULT '{}'")
+        if "extra_abschnitte_json" not in cols:
+            conn.execute("ALTER TABLE vorkommnisse ADD COLUMN extra_abschnitte_json TEXT NOT NULL DEFAULT '[]'")
 
 
 _init_db()
@@ -94,8 +103,9 @@ def speichern(daten: dict) -> int:
                (flug, typ, bereich, datum, ort, offblock_plan, offblock_ist,
                 erstellt_von, ursache, ergebnis,
                 passagiere_json, personal_json, chronologie_json,
-                erstellt_am, geaendert_am)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                erstellt_am, geaendert_am, word_datei,
+                abschnitt_titel_json, extra_abschnitte_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 daten.get("flug", ""),
                 daten.get("typ", ""),
@@ -112,6 +122,9 @@ def speichern(daten: dict) -> int:
                 json.dumps(daten.get("chronologie", []), ensure_ascii=False),
                 jetzt,
                 jetzt,
+                daten.get("word_datei", ""),
+                json.dumps(daten.get("abschnitt_titel", {}), ensure_ascii=False),
+                json.dumps(daten.get("extra_abschnitte", []), ensure_ascii=False),
             ),
         )
         new_id = cur.lastrowid
@@ -129,6 +142,7 @@ def aktualisieren(vorkommnis_id: int, daten: dict) -> None:
                offblock_plan=?, offblock_ist=?,
                erstellt_von=?, ursache=?, ergebnis=?,
                passagiere_json=?, personal_json=?, chronologie_json=?,
+               abschnitt_titel_json=?, extra_abschnitte_json=?,
                geaendert_am=?
                WHERE id=?""",
             (
@@ -145,9 +159,22 @@ def aktualisieren(vorkommnis_id: int, daten: dict) -> None:
                 json.dumps(daten.get("passagiere", []), ensure_ascii=False),
                 json.dumps(daten.get("personal", []), ensure_ascii=False),
                 json.dumps(daten.get("chronologie", []), ensure_ascii=False),
+                json.dumps(daten.get("abschnitt_titel", {}), ensure_ascii=False),
+                json.dumps(daten.get("extra_abschnitte", []), ensure_ascii=False),
                 jetzt,
                 vorkommnis_id,
             ),
+        )
+    _push(vorkommnis_id)
+
+
+def setze_word_datei(vorkommnis_id: int, word_datei: str) -> None:
+    """Setzt (oder leert) die verknüpfte Word-Datei eines Vorkommnisses."""
+    jetzt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE vorkommnisse SET word_datei=?, geaendert_am=? WHERE id=?",
+            (word_datei, jetzt, vorkommnis_id),
         )
     _push(vorkommnis_id)
 
@@ -166,9 +193,11 @@ def lade_alle() -> list[dict]:
     result = []
     for row in rows:
         d = dict(row)
-        d["passagiere"]  = json.loads(d.pop("passagiere_json",  "[]"))
-        d["personal"]    = json.loads(d.pop("personal_json",    "[]"))
-        d["chronologie"] = json.loads(d.pop("chronologie_json", "[]"))
+        d["passagiere"]       = json.loads(d.pop("passagiere_json",       "[]"))
+        d["personal"]         = json.loads(d.pop("personal_json",         "[]"))
+        d["chronologie"]      = json.loads(d.pop("chronologie_json",      "[]"))
+        d["abschnitt_titel"]  = json.loads(d.pop("abschnitt_titel_json",  "{}"))
+        d["extra_abschnitte"] = json.loads(d.pop("extra_abschnitte_json", "[]"))
         result.append(d)
     return result
 
@@ -181,7 +210,9 @@ def lade_ein(vorkommnis_id: int) -> dict | None:
     if row is None:
         return None
     d = dict(row)
-    d["passagiere"]  = json.loads(d.pop("passagiere_json",  "[]"))
-    d["personal"]    = json.loads(d.pop("personal_json",    "[]"))
-    d["chronologie"] = json.loads(d.pop("chronologie_json", "[]"))
+    d["passagiere"]       = json.loads(d.pop("passagiere_json",       "[]"))
+    d["personal"]         = json.loads(d.pop("personal_json",         "[]"))
+    d["chronologie"]      = json.loads(d.pop("chronologie_json",      "[]"))
+    d["abschnitt_titel"]  = json.loads(d.pop("abschnitt_titel_json",  "{}"))
+    d["extra_abschnitte"] = json.loads(d.pop("extra_abschnitte_json", "[]"))
     return d

@@ -279,8 +279,8 @@ class ExportDialog(QDialog):
         self._sl_nacht = QLineEdit()
         self._sl_nacht.setPlaceholderText("Name Schichtleiter Nacht")
 
-        form.addRow("Von:",              self._von)
-        form.addRow("Bis:",              self._bis)
+        form.addRow("Von: *",            self._von)
+        form.addRow("Bis: *",              self._bis)
         form.addRow("PAX-Zahl:",        self._pax)
         form.addRow("Aktive Bulmor:",   self._bulmor)
         form.addRow("SL-Einsaetze:",   self._einsaetze)
@@ -642,10 +642,36 @@ class ExportDialog(QDialog):
         mb.exec()
 
     def _export(self):
-        # Speicherort wählen
-        ziel_dir = self._STAERKEMELDUNG_DIR if os.path.isdir(self._STAERKEMELDUNG_DIR) else os.path.expanduser("~")
+        # Pflichtfeld-Validierung: Von und Bis müssen gültig und Von ≤ Bis sein
         qv = self._von.date()
         qb = self._bis.date()
+        if not qv.isValid() or not qb.isValid():
+            QMessageBox.warning(self, "Pflichtfelder fehlen",
+                                "Bitte gültige Datumswerte für Von und Bis eingeben.")
+            return
+        if qv > qb:
+            QMessageBox.warning(
+                self, "Ungültiger Zeitraum",
+                "Das Von-Datum darf nicht nach dem Bis-Datum liegen.\n\n"
+                f"Von:  {qv.toString('dd.MM.yyyy')}\n"
+                f"Bis:   {qb.toString('dd.MM.yyyy')}",
+            )
+            self._von.setFocus()
+            return
+        if qv == qb:
+            ret = QMessageBox.warning(
+                self, "Von = Bis – gleicher Tag",
+                f"Von und Bis haben dasselbe Datum ({qv.toString('dd.MM.yyyy')}).\n\n"
+                "Ist das korrekt (Stärkemeldung für einen einzelnen Tag),\n"
+                "oder möchten Sie die Daten korrigieren?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if ret != QMessageBox.StandardButton.Yes:
+                self._bis.setFocus()
+                return
+        # Speicherort wählen
+        ziel_dir = self._STAERKEMELDUNG_DIR if os.path.isdir(self._STAERKEMELDUNG_DIR) else os.path.expanduser("~")
         von_str = f"{qv.day():02d}.{qv.month():02d}.{qv.year()}"
         bis_str = f"{qb.day():02d}.{qb.month():02d}.{qb.year()}"
         if qv == qb:
