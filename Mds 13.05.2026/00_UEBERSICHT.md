@@ -1,4 +1,4 @@
-# Nesk3 – Gesamtübersicht (Stand: 13.05.2026)
+# Nesk3 – Gesamtübersicht (Stand: 02.06.2026)
 
 ## Was ist Nesk3?
 
@@ -10,7 +10,7 @@ Sie verwaltet Mitarbeiter, Dienstpläne, Fahrzeuge, Passagieranfragen, Vorfälle
 - **Datenbank lokal:** SQLite (mehrere `.db`-Dateien in `database SQL/`)  
 - **Cloud-Sync:** Turso (libSQL, read-replica)  
 - **Design:** SAP Fiori inspiriert (Farben in `config.py`)  
-- **Version:** 3.7.0  
+- **Version:** 3.8.0  
 
 ---
 

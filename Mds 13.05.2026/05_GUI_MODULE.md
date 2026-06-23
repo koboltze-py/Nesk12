@@ -1,4 +1,4 @@
-# GUI-Module – Beschreibung aller Widgets (Stand: 13.05.2026)
+# GUI-Module – Beschreibung aller Widgets (Stand: 02.06.2026)
 
 ## gui/main_window.py
 
@@ -324,3 +324,49 @@ def _erstelle(self):
 - Dokumenten-Verwaltung je Mitarbeiter
 - Upload/Download per Mitarbeiter-ID
 - Verbunden mit `functions/mitarbeiter_dokumente_functions.py`
+
+---
+
+## gui/workflow.py  *(neu v3.8.0)*
+
+**Klassen:** `WorkflowWidget`, `_DetailDialog`, `_LadeThread`
+
+```python
+class WorkflowWidget(QWidget):
+    # Monat-Selektor: Dropdown + "Neuer Monat" + "Monat entfernen"
+    # Geladene SM/DP-Pfade werden je Monat in DB gespeichert (workflow_session)
+    # Beim nächsten Start: letzter Monat wird automatisch geladen + Abgleich gestartet
+
+    def _monat_gewaehlt(self, idx): ...    # Lädt Session, startet Abgleich
+    def _neuer_monat(self): ...            # Dialog: Monat + Jahr wählen
+    def _monat_loeschen(self): ...         # Entfernt Monat aus Session (Carmen/Notizen bleiben)
+    def _speichere_session_wenn_monat(self): ...  # Auto-Speichern nach Datei-Laden
+
+    def _starte_abgleich(self): ...        # Startet _LadeThread
+    def _zeige_ergebnisse(self, ergebnisse): ...   # Füllt Tabelle
+    def _detail_zeigen(self, index): ...   # Öffnet _DetailDialog (Doppelklick)
+    def _kontext_menu_erg(self, pos): ...  # Carmen-Toggle + Notiz + Dateien öffnen
+
+class _DetailDialog(QDialog):
+    # 9 Spalten: Status | SM-Name | SM-Dienst | SM-Von | SM-Bis |
+    #            DP-Name | DP-Dienst | DP-Von | DP-Bis (+ DP-Notiz)
+    # SL/Dispo-Gruppe oben, dann Trennzeile "── Betreuer ──", dann Betreuer
+    # Sortierung Dispo: SL+DT3 → SL+DN3 → DT → DN
+    # Sortierung Betreuer: T → T10 → T8 → N → N10
+
+class _LadeThread(QThread):
+    # Lädt SM (Word) + DP (Excel) parallel, führt Abgleich durch
+    # Signals: fortschritt(str), fertig(list), fehler(str)
+```
+
+### Persistenz
+- `database/workflow_db.py`: zwei Tabellen
+  - `workflow_tag`: Carmen-Status + Notiz pro Tag+SM-Datei
+  - `workflow_session`: SM/DP-Pfadlisten pro Monat
+
+### Abgleich-Logik
+- Fuzzy-Matching via `difflib.get_close_matches` (cutoff 0.82)
+- Pre-Resolve für compound-Namen (El Mojahid, Moeeni Mahvelati)
+- Abbrev-Einträge (z.B. "Blei Pa") werden vor einfachen Namen gematcht
+- Rufbereitschaft (R) und "lars peters" automatisch ausgeschlossen
+- `functions/dienstplan_parser.py`: DP-Notizen aus Zellen rechts von ENDE

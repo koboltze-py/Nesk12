@@ -1,6 +1,26 @@
-# Changelog – Alle Versionen (Stand: 13.05.2026)
+# Changelog – Alle Versionen (Stand: 02.06.2026)
 
 > Vollständiger Changelog aus `CHANGELOG.md` – für Rekonstruktion
+
+---
+
+## v3.8.0 – 02.06.2026
+
+### Workflow-Modul – SM↔Dienstplan Abgleich
+- Neues GUI-Modul `gui/workflow.py`: Stärkemeldungen (Word) ↔ Tagesdienstpläne (Excel) automatisch abgleichen
+- Personen, Dienste und Zeiten werden verglichen (identisch / Abweichung / nur Stärke / nur Dienstplan)
+- **Monat-Selektor**: Monat anlegen, SM/DP-Dateipfade laden; Stand wird in DB gespeichert und beim nächsten Start automatisch wiederhergestellt
+- **Session-Persistenz**: neue SQLite-Tabelle `workflow_session` in `database/workflow_db.py`
+- **Carmen-Abgleich**: Pro Tag markierbar mit Zeitstempel (grünes ✓), persistiert in `workflow_tag`
+- **Notizen** pro Tag, ebenfalls persistiert (📝 Icon)
+- **Detail-Dialog** (1200px): alle Personen des Tages mit SM/DP-Gegenüberstellung
+  - SL/Dispo-Gruppe oben, Betreuer-Gruppe unten mit Trennzeile
+  - Sortierung Dispo/SL: SL+DT3 → SL+DN3 → DT → DN
+  - Sortierung Betreuer: T → T10 → T8 → N → N10
+- DP-Notizen aus Excel-Zellen rechts von ENDE-Spalte angezeigt
+- Fuzzy-Matching mit compound-Namen (El Mojahid, Moeeni Mahvelati etc.)
+- Rufbereitschaft (R) und Lars Peters automatisch vom Abgleich ausgeschlossen
+- Warn-Banner bei fehlenden SM/DP-Paaren
 
 ---
 

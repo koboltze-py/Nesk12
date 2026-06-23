@@ -1,4 +1,4 @@
-# Datenbanken – vollständige Schemata (Stand: 13.05.2026)
+# Datenbanken – vollständige Schemata (Stand: 02.06.2026)
 
 ## Übersicht
 
@@ -425,3 +425,38 @@ PRAGMA foreign_keys = ON      # FK-Constraints aktiviert
 | `notizen.erstellt_am` | `YYYY-MM-DD HH:MM:SS` |
 | SQLite DEFAULT | `datetime('now','localtime')` |
 | Dienstplan | ISO-8601 Text (`YYYY-MM-DD`) |
+
+---
+
+## 8. workflow.db  *(neu v3.8.0)*
+
+**Pfad:** `database SQL/workflow.db`  
+**Modul:** `database/workflow_db.py`
+
+### Tabelle `workflow_tag`
+```sql
+CREATE TABLE workflow_tag (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    datum                 TEXT    NOT NULL,           -- YYYY-MM-DD
+    sm_datei              TEXT    NOT NULL,           -- Dateiname Stärkemeldung
+    dp_datei              TEXT    NOT NULL DEFAULT '',
+    abgeglichen_carmen    INTEGER NOT NULL DEFAULT 0, -- 0/1
+    abgeglichen_carmen_am TEXT,                       -- YYYY-MM-DD HH:MM:SS
+    notiz                 TEXT    NOT NULL DEFAULT '',
+    geaendert_am          TEXT,
+    UNIQUE(datum, sm_datei)
+);
+```
+
+### Tabelle `workflow_session`
+```sql
+CREATE TABLE workflow_session (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    monat     TEXT    NOT NULL UNIQUE, -- YYYY-MM
+    sm_pfade  TEXT    NOT NULL DEFAULT '[]', -- JSON-Array Pfade
+    dp_pfade  TEXT    NOT NULL DEFAULT '[]', -- JSON-Array Pfade
+    last_used TEXT                           -- YYYY-MM-DD HH:MM:SS
+);
+```
+
+**Wichtig:** `workflow_tag` persistiert Carmen-Status und Notizen auch wenn der Monat aus `workflow_session` gelöscht wird.
