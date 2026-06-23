@@ -664,10 +664,10 @@ class ExportDialog(QDialog):
                 f"Von und Bis haben dasselbe Datum ({qv.toString('dd.MM.yyyy')}).\n\n"
                 "Ist das korrekt (Stärkemeldung für einen einzelnen Tag),\n"
                 "oder möchten Sie die Daten korrigieren?",
-                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if ret != QMessageBox.StandardButton.Ok:
+            if ret != QMessageBox.StandardButton.Yes:
                 self._bis.setFocus()
                 return
         # Speicherort wählen
