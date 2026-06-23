@@ -658,6 +658,18 @@ class ExportDialog(QDialog):
             )
             self._von.setFocus()
             return
+        if qv == qb:
+            ret = QMessageBox.warning(
+                self, "Von = Bis – gleicher Tag",
+                f"Von und Bis haben dasselbe Datum ({qv.toString('dd.MM.yyyy')}).\n\n"
+                "Ist das korrekt (Stärkemeldung für einen einzelnen Tag),\n"
+                "oder möchten Sie die Daten korrigieren?",
+                QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if ret != QMessageBox.StandardButton.Ok:
+                self._bis.setFocus()
+                return
         # Speicherort wählen
         ziel_dir = self._STAERKEMELDUNG_DIR if os.path.isdir(self._STAERKEMELDUNG_DIR) else os.path.expanduser("~")
         von_str = f"{qv.day():02d}.{qv.month():02d}.{qv.year()}"
